@@ -1,30 +1,20 @@
-.. Weblate manual documentation master file, created by
-   sphinx-quickstart on Wed Mar  7 14:48:43 2012.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+.. title:: Weblate Documentation
 
-Welcome to Weblate's documentation!
-===================================
+.. include:: ../README.rst
 
-Contents:
+.. include:: toc-user.rst
 
-.. toctree::
-    :maxdepth: 2
+.. include:: toc-admin.rst
 
-    about
-    user/index
-    devel/index
-    admin/index
-    faq
-    formats
-    api
-    changes
-    contributing
-    license
+.. include:: toc-devel.rst
 
+.. include:: toc-contrib.rst
+
+.. include:: toc-changes.rst
 
 Indices and tables
-==================
+------------------
 
 * :ref:`genindex`
-* :ref:`search`
+* :ref:`http-routingtable`
+* :ref:`py-modindex`

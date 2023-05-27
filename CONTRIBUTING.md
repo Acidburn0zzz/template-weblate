@@ -1,30 +1,42 @@
 # Contributing to Weblate
 
-As an open source project, Weblate welcomes contributions of many forms.
+As a libre copylefted project, Weblate welcomes contributions in many forms.
 
 ## Bug reporting
 
-Please use the [issue tracker on GitHub][1]. Useful error report contains
-backtrace if possible. In production setup, admins receive it on configured
-email address, in debug mode, it is shown on screen and for management
-commands, you can obtain full backtrace using ``--traceback`` parameter.
+Please use the [issue tracker on GitHub][1]. Useful error reports contain a
+backtrace if possible.
 
-Many bugs might be also caused by third party libraries, so please include
-their versions as well. You can collect all using
-``./manage.py list_versions``.
+In production setup, admins receive it on the configured e-mail address,
 
-[1]: https://github.com/nijel/weblate/issues
+in debug mode, it is shown on screen and for management commands,
 
-## Patches submission
+you can obtain the full backtrace using `--traceback` parameter.
 
-Patches are welcome either as [pull requests on GitHub][2] or using email on
-[our mailing list][3].
+Bugs might also be caused by third party libraries, so please include
+their versions as well. You can collect them all using:
+`weblate list_versions`.
 
-[2]: https://github.com/nijel/weblate/pulls
-[3]: https://lists.cihar.com/cgi-bin/mailman/listinfo/weblate
+## Patch submission
 
-## More information
+Patches are welcome, either as [pull requests on GitHub][2] or using e-mail on
+[the mailing list][3]
 
-You can find more information on our website:
+## Running the development version locally
 
-https://weblate.org/en/contribute/
+If you have Docker and docker-compose installed, you can spin up the development
+environment by running:
+
+```
+   ./rundev.sh
+```
+
+## More info
+
+To be found on the website:
+
+https://weblate.org/contribute/
+
+[1]: https://github.com/WeblateOrg/weblate/issues
+[2]: https://github.com/WeblateOrg/weblate/pulls
+[3]: https://lists.cihar.com/postorius/lists/weblate.lists.cihar.com/

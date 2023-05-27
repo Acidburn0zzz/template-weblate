@@ -1,20 +1,24 @@
 #!/bin/sh
+
+# Copyright © Michal Čihař <michal@weblate.org>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Testsuite executor
 
-. ci/lib
+. ci/lib.sh
 
-export TEST_MIGRATIONS=1
-
-run_coverage ./manage.py migrate --noinput --traceback
+run_coverage ./manage.py compilemessages
 check
 
-unset TEST_MIGRATIONS
+run_coverage ./manage.py collectstatic --noinput --verbosity 0
+check
 
-run_coverage ./manage.py collectstatic --noinput
+run_coverage ./manage.py migrate --noinput --traceback
 check
 
 run_coverage ./manage.py check
 check
 
-run_coverage ./manage.py test -v 2
+run_coverage ./manage.py test
 check

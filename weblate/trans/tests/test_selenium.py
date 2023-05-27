@@ -1,256 +1,313 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-from __future__ import print_function
-from unittest import SkipTest
-import time
+import math
 import os
-import json
-from base64 import b64encode
-from six.moves.http_client import HTTPConnection
-import django
-from django.test import LiveServerTestCase
-from django.core.urlresolvers import reverse
+import time
+import warnings
+from contextlib import contextmanager
+from datetime import timedelta
+from unittest import SkipTest
+
+from django.conf import settings
 from django.core import mail
-from django.contrib.auth.models import User
-try:
-    from selenium import webdriver
-    from selenium.common.exceptions import (
-        WebDriverException, ElementNotVisibleException
-    )
-    HAS_SELENIUM = True
-except ImportError:
-    HAS_SELENIUM = False
+from django.test.utils import modify_settings, override_settings
+from django.urls import reverse
+from selenium import webdriver
+from selenium.common.exceptions import ElementNotVisibleException, WebDriverException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.expected_conditions import (
+    presence_of_element_located,
+    staleness_of,
+)
+from selenium.webdriver.support.ui import Select, WebDriverWait
 
+import weblate.screenshots.views
+from weblate.fonts.tests.utils import FONT
+from weblate.lang.models import Language
+from weblate.trans.models import Change, Component, Project, Unit
+from weblate.trans.tests.test_models import BaseLiveServerTestCase
 from weblate.trans.tests.test_views import RegistrationTestMixin
-from weblate.trans.tests import OverrideSettings
+from weblate.trans.tests.utils import (
+    TempDirMixin,
+    create_test_billing,
+    create_test_user,
+    get_test_file,
+)
+from weblate.utils.db import using_postgresql
+from weblate.vcs.ssh import get_key_data
+from weblate.wladmin.models import ConfigurationError, SupportStatus
 
-# Check whether we should run Selenium tests
-DO_SELENIUM = (
-    'DO_SELENIUM' in os.environ and
-    'SAUCE_USERNAME' in os.environ and
-    'SAUCE_ACCESS_KEY' in os.environ and
-    HAS_SELENIUM
+TEST_BACKENDS = (
+    "social_core.backends.email.EmailAuth",
+    "social_core.backends.google.GoogleOAuth2",
+    "social_core.backends.github.GithubOAuth2",
+    "social_core.backends.bitbucket.BitbucketOAuth",
+    "social_core.backends.suse.OpenSUSEOpenId",
+    "social_core.backends.ubuntu.UbuntuOpenId",
+    "social_core.backends.fedora.FedoraOpenId",
+    "social_core.backends.facebook.FacebookOAuth2",
+    "weblate.accounts.auth.WeblateUserBackend",
+)
+
+SOURCE_FONT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "static",
+    "vendor",
+    "font-source",
+    "TTF",
+    "SourceSans3-Bold.ttf",
 )
 
 
-class SeleniumTests(LiveServerTestCase, RegistrationTestMixin):
-    caps = {
-        'browserName': 'firefox',
-        'version': '39.0',
-        'platform': 'Linux',
-    }
+class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin):
+    driver = None
+    driver_error = ""
+    image_path = None
+    site_domain = ""
 
-    def set_test_status(self, passed=True):
-        body_content = json.dumps({"passed": passed})
-        connection = HTTPConnection("saucelabs.com")
-        connection.request(
-            'PUT',
-            '/rest/v1/{}/jobs/{}'.format(
-                self.username, self.driver.session_id
-            ),
-            body_content,
-            headers={"Authorization": "Basic {}".format(self.sauce_auth)}
-        )
-        result = connection.getresponse()
-        return result.status == 200
+    @classmethod
+    def _databases_support_transactions(cls):
+        # This is workaround for MySQL as FULL TEXT index does not work
+        # well inside a transaction, so we avoid using transactions for
+        # tests. Otherwise we end up with no matches for the query.
+        # See https://dev.mysql.com/doc/refman/5.6/en/innodb-fulltext-index.html
+        if not using_postgresql():
+            return False
+        return super()._databases_support_transactions()
 
-    def run(self, result=None):
-        if result is None:
-            result = self.defaultTestResult()
-
-        errors = len(result.errors)
-        failures = len(result.failures)
-        super(SeleniumTests, self).run(result)
-
-        if DO_SELENIUM:
-            self.set_test_status(
-                errors == len(result.errors) and
-                failures == len(result.failures)
-            )
+    @contextmanager
+    def wait_for_page_load(self, timeout=30):
+        old_page = self.driver.find_element(By.TAG_NAME, "html")
+        yield
+        WebDriverWait(self.driver, timeout).until(staleness_of(old_page))
 
     @classmethod
     def setUpClass(cls):
-        if DO_SELENIUM:
-            cls.caps['name'] = 'Weblate CI build'
-            # Fill in Travis details in caps
-            if 'TRAVIS_JOB_NUMBER' in os.environ:
-                cls.caps['tunnel-identifier'] = os.environ['TRAVIS_JOB_NUMBER']
-                cls.caps['build'] = os.environ['TRAVIS_BUILD_NUMBER']
-                cls.caps['tags'] = [
-                    'python-{}'.format(os.environ['TRAVIS_PYTHON_VERSION']),
-                    'django-{}'.format(django.get_version()),
-                    'CI'
-                ]
-
-            # Use Sauce connect
-            cls.username = os.environ['SAUCE_USERNAME']
-            cls.key = os.environ['SAUCE_ACCESS_KEY']
-            cls.sauce_auth = b64encode(
-                '{}:{}'.format(cls.username, cls.key).encode('utf-8')
-            )
-            cls.driver = webdriver.Remote(
-                desired_capabilities=cls.caps,
-                command_executor="http://{0}:{1}@{2}/wd/hub".format(
-                    cls.username,
-                    cls.key,
-                    'ondemand.saucelabs.com',
+        # Screenshots storage
+        cls.image_path = os.path.join(
+            os.path.dirname(
+                os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 )
-            )
-            cls.driver.implicitly_wait(10)
+            ),
+            "test-images",
+        )
+        if not os.path.exists(cls.image_path):
+            os.makedirs(cls.image_path)
+        # Build Chrome driver
+        options = Options()
+        # Run headless
+        options.headless = True
+        # Seems to help in some corner cases, see
+        # https://stackoverflow.com/a/50642913/225718
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+
+        # Force Chrome in English
+        options.add_argument("--lang=en")
+        # Accept English as primary language, this does not seem to work
+        options.add_experimental_option("prefs", {"intl.accept_languages": "en,en_US"})
+
+        # Need to revert fontconfig custom config for starting chrome
+        backup_fc = os.environ["FONTCONFIG_FILE"]
+        del os.environ["FONTCONFIG_FILE"]
+
+        # Force English locales, the --lang and accept_language settings does not
+        # work in some cases
+        backup_lang = os.environ.get("LANG", None)
+        os.environ["LANG"] = "en_US.UTF-8"
+
+        try:
+            cls.driver = webdriver.Chrome(options=options)
+        except WebDriverException as error:
+            cls.driver_error = str(error)
+            if "CI_SELENIUM" in os.environ:
+                raise
+
+        # Restore custom fontconfig settings
+        os.environ["FONTCONFIG_FILE"] = backup_fc
+        # Restore locales
+        if backup_lang is None:
+            del os.environ["LANG"]
+        else:
+            os.environ["LANG"] = backup_lang
+
+        if cls.driver is not None:
+            cls.driver.implicitly_wait(5)
             cls.actions = webdriver.ActionChains(cls.driver)
-            jobid = cls.driver.session_id
-            print(
-                'Sauce Labs job: https://saucelabs.com/jobs/{}'.format(jobid)
-            )
-        super(SeleniumTests, cls).setUpClass()
+
+        super().setUpClass()
 
     def setUp(self):
-        if not DO_SELENIUM:
-            raise SkipTest('Selenium Tests disabled')
-        super(SeleniumTests, self).setUp()
+        if self.driver is None:
+            warnings.warn(f"Selenium error: {self.driver_error}", stacklevel=1)
+            raise SkipTest(f"Webdriver not available: {self.driver_error}")
+        super().setUp()
+        self.driver.get("{}{}".format(self.live_server_url, reverse("home")))
+        self.driver.set_window_size(1200, 1024)
+        self.site_domain = settings.SITE_DOMAIN
+        settings.SITE_DOMAIN = f"{self.host}:{self.server_thread.port}"
+
+    def tearDown(self):
+        super().tearDown()
+        settings.SITE_DOMAIN = self.site_domain
 
     @classmethod
     def tearDownClass(cls):
-        super(SeleniumTests, cls).tearDownClass()
-        if DO_SELENIUM:
+        super().tearDownClass()
+        if cls.driver is not None:
             cls.driver.quit()
+            cls.driver = None
 
-    def expand_navbar(self):
-        """Expand navbar if exists"""
-        try:
-            self.driver.find_element_by_id('navbar-toggle').click()
-        except ElementNotVisibleException:
-            return
+    def scroll_top(self):
+        self.driver.execute_script("window.scrollTo(0, 0)")
 
-    def click(self, element):
-        """Wrapper to scroll into element for click"""
+    def screenshot(self, name: str):
+        """Captures named full page screenshot."""
+        self.scroll_top()
+        # Get window and document dimensions
+        scroll_height = self.driver.execute_script("return document.body.scrollHeight")
+        scroll_width = self.driver.execute_script("return document.body.scrollWidth")
+        # Resize the window
+        self.driver.set_window_size(scroll_width, scroll_height + 20)
+        time.sleep(0.2)
+        # Get screenshot
+        with open(os.path.join(self.image_path, name), "wb") as handle:
+            handle.write(self.driver.get_screenshot_as_png())
+
+    def click(self, element="", htmlid=None):
+        """Wrapper to scroll into element for click."""
+        if htmlid:
+            element = self.driver.find_element(By.ID, htmlid)
+        if isinstance(element, str):
+            element = self.driver.find_element(By.LINK_TEXT, element)
+
         try:
             element.click()
         except ElementNotVisibleException:
             self.actions.move_to_element(element).perform()
             element.click()
 
-    def test_login(self):
-        # open home page
-        self.driver.get('{}{}'.format(self.live_server_url, reverse('home')))
+    def upload_file(self, element, filename):
+        filename = os.path.abspath(filename)
+        if not os.path.exists(filename):
+            raise ValueError(f"Test file not found: {filename}")
+        element.send_keys(filename)
 
+    def clear_field(self, element):
+        element.send_keys(Keys.CONTROL + "a")
+        element.send_keys(Keys.DELETE)
+        return element
+
+    def do_login(self, create=True, superuser=False):
         # login page
-        self.expand_navbar()
-        self.click(
-            self.driver.find_element_by_id('login-button'),
-        )
+        with self.wait_for_page_load():
+            self.click(htmlid="login-button")
 
-        username_input = self.driver.find_element_by_id('id_username')
-        username_input.send_keys('testuser')
-        password_input = self.driver.find_element_by_id('id_password')
-        password_input.send_keys('secret')
-        self.click(
-            self.driver.find_element_by_xpath('//input[@value="Login"]')
-        )
+        # Create user
+        if create:
+            user = create_test_user()
+            if superuser:
+                user.is_superuser = True
+                user.save()
+            user.profile.language = "en"
+            user.profile.save()
+            user.profile.languages.set(
+                Language.objects.filter(code__in=("he", "cs", "hu"))
+            )
+        else:
+            user = None
+
+        # Login
+        username_input = self.driver.find_element(By.ID, "id_username")
+        username_input.send_keys("weblate@example.org")
+        password_input = self.driver.find_element(By.ID, "id_password")
+        password_input.send_keys("testpassword")
+
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.XPATH, '//input[@value="Sign in"]'))
+        return user
+
+    def open_manage(self, login=True):
+        # Login as superuser
+        user = self.do_login(superuser=True) if login else None
+
+        # Open admin page
+        with self.wait_for_page_load():
+            self.click(htmlid="admin-button")
+        return user
+
+    def open_admin(self, login=True):
+        user = self.open_manage(login)
+        with self.wait_for_page_load():
+            self.click("Tools")
+        with self.wait_for_page_load():
+            self.click("Django admin interface")
+        return user
+
+    def test_failed_login(self):
+        self.do_login(create=False)
 
         # We should end up on login page as user was invalid
-        self.driver.find_element_by_name('username')
+        self.driver.find_element(By.ID, "id_username")
 
+    def test_login(self):
         # Do proper login with new user
-        User.objects.create_user(
-            'testuser',
-            'noreply@weblate.org',
-            'testpassword',
-            first_name='Test User',
-        )
-        password_input = self.driver.find_element_by_id('id_password')
-        password_input.send_keys('testpassword')
-        self.click(
-            self.driver.find_element_by_xpath('//input[@value="Login"]')
-        )
-
-        # Wait for submit
-        time.sleep(1)
+        self.do_login()
 
         # Load profile
-        self.expand_navbar()
-        self.click(
-            self.driver.find_element_by_id('profile-button')
-        )
+        self.click(htmlid="user-dropdown")
+        with self.wait_for_page_load():
+            self.click(htmlid="settings-button")
 
         # Wait for profile to load
-        self.driver.find_element_by_id('subscriptions')
+        self.driver.find_element(By.ID, "notifications")
+
+        # Load translation memory
+        self.click(htmlid="user-dropdown")
+        with self.wait_for_page_load():
+            self.click(htmlid="memory-button")
+
+        self.screenshot("memory.png")
 
         # Finally logout
-        self.expand_navbar()
-        self.click(
-            self.driver.find_element_by_id('logout-button')
-        )
+        self.click(htmlid="user-dropdown")
+        with self.wait_for_page_load():
+            self.click(htmlid="logout-button")
 
         # We should be back on home page
-        self.expand_navbar()
-        self.driver.find_element_by_id('projects')
+        self.driver.find_element(By.ID, "browse-projects")
 
     def register_user(self):
-        # open home page
-        self.driver.get('{}{}'.format(self.live_server_url, reverse('home')))
-
         # registration page
-        self.expand_navbar()
-        self.click(
-            self.driver.find_element_by_id('register-button'),
-        )
+        with self.wait_for_page_load():
+            self.click(htmlid="register-button")
 
         # Fill in registration form
-        self.driver.find_element_by_id(
-            'id_email'
-        ).send_keys(
-            'test@example.net'
-        )
-        self.driver.find_element_by_id(
-            'id_username'
-        ).send_keys(
-            'test-example'
-        )
-        self.driver.find_element_by_id(
-            'id_first_name'
-        ).send_keys(
-            'Test Example'
-        )
-        self.click(
-            self.driver.find_element_by_xpath('//input[@value="Register"]')
-        )
+        self.driver.find_element(By.ID, "id_email").send_keys("weblate@example.org")
+        self.driver.find_element(By.ID, "id_username").send_keys("test-example")
+        self.driver.find_element(By.ID, "id_fullname").send_keys("Test Example")
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.XPATH, '//input[@value="Register"]'))
 
         # Wait for registration email
         loops = 0
-        while len(mail.outbox) == 0:
-            time.sleep(1)
+        while not mail.outbox:
+            time.sleep(0.2)
             loops += 1
             if loops > 20:
                 break
 
-        return ''.join(
-            (self.live_server_url, self.assert_registration_mailbox())
-        )
+        return self.assert_registration_mailbox()
 
-    @OverrideSettings(REGISTRATION_CAPTCHA=False)
+    @override_settings(REGISTRATION_CAPTCHA=False)
     def test_register(self, clear=False):
-        """
-        Test registration.
-        """
+        """Test registration."""
         url = self.register_user()
 
         # Delete all cookies
@@ -260,71 +317,901 @@ class SeleniumTests(LiveServerTestCase, RegistrationTestMixin):
             except WebDriverException as error:
                 # This usually happens when browser fails to delete some
                 # of the cookies for whatever reason.
-                print('Ignoring: {0}'.format(error))
+                warnings.warn(f"Ignoring: {error}", stacklevel=4)
 
         # Confirm account
         self.driver.get(url)
 
-        # Check we're logged in
-        self.expand_navbar()
-        self.assertTrue(
-            'Test Example' in
-            self.driver.find_element_by_id('profile-button').text
+        # Check we got message
+        self.assertIn(
+            "You have activated", self.driver.find_element(By.TAG_NAME, "body").text
         )
 
-        # Check we got message
-        self.assertTrue(
-            'You have activated' in
-            self.driver.find_element_by_tag_name('body').text
+        # Check we're signed in
+        self.click(htmlid="user-dropdown")
+        self.assertIn(
+            "Test Example", self.driver.find_element(By.ID, "profile-name").text
         )
 
     def test_register_nocookie(self):
-        """
-        Test registration without cookies.
-        """
+        """Test registration without cookies."""
         self.test_register(True)
 
+    @override_settings(WEBLATE_GPG_IDENTITY="Weblate <weblate@example.com>")
+    def test_gpg(self):
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "About Weblate"))
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "Keys"))
+        self.screenshot("about-gpg.png")
 
-# What other platforms we want to test
-EXTRA_PLATFORMS = {
-    'Chrome': {
-        'browserName': 'chrome',
-        'platform': 'XP',
-    },
-    'MSIE9': {
-        'browserName': 'internet explorer',
-        'version': '9',
-        'platform': 'VISTA',
-    },
-    'IPhone': {
-        'browserName': "iPhone",
-        'deviceName': "iPhone Simulator",
-        'device-orientation': "portrait",
-    },
-    'Android': {
-        'browserName': "android",
-        'deviceName': "Android Emulator",
-        'device-orientation': "portrait",
-    },
-}
+    def test_ssh(self):
+        """Test SSH admin interface."""
+        self.open_admin()
 
+        time.sleep(0.2)
+        self.screenshot("admin.png")
 
-def create_extra_classes():
-    '''
-    Create classes for testing with other browsers
-    '''
-    classes = {}
-    for platform, caps in EXTRA_PLATFORMS.items():
-        name = '{}_{}'.format(
-            platform,
-            SeleniumTests.__name__,
+        # Open SSH page
+        with self.wait_for_page_load():
+            self.click("SSH keys")
+
+        # Generate SSH key
+        if get_key_data() is None:
+            with self.wait_for_page_load():
+                self.click(htmlid="generate-ssh-button")
+
+        # Add SSH host key
+        self.driver.find_element(By.ID, "id_host").send_keys("github.com")
+        with self.wait_for_page_load():
+            self.click(htmlid="ssh-add-button")
+
+        self.screenshot("ssh-keys-added.png")
+
+        # Open SSH page for final screenshot
+        with self.wait_for_page_load():
+            self.click("SSH keys")
+        self.screenshot("ssh-keys.png")
+
+    def create_component(self):
+        project = Project.objects.create(name="WeblateOrg", slug="weblateorg")
+        Component.objects.create(
+            name="Language names",
+            slug="language-names",
+            project=project,
+            repo="https://github.com/WeblateOrg/demo.git",
+            filemask="weblate/langdata/locale/*/LC_MESSAGES/django.po",
+            new_base="weblate/langdata/locale/django.pot",
+            file_format="po",
         )
-        classdict = dict(SeleniumTests.__dict__)
-        classdict.update({
-            'caps': caps,
-        })
-        classes[name] = type(name, (SeleniumTests,), classdict)
+        Component.objects.create(
+            name="Django",
+            slug="django",
+            project=project,
+            repo="weblate://weblateorg/language-names",
+            filemask="weblate/locale/*/LC_MESSAGES/django.po",
+            new_base="weblate/locale/django.pot",
+            file_format="po",
+        )
+        return project
 
-    globals().update(classes)
+    def create_glossary(self, project, language):
+        glossary = project.glossaries[0].translation_set.get(language=language)
+        glossary.add_unit(
+            None,
+            "",
+            "machine translation",
+            "strojový překlad",
+        )
+        glossary.add_unit(
+            None,
+            "",
+            "project",
+            "projekt",
+        )
+        return glossary
 
-create_extra_classes()
+    def view_site(self):
+        with self.wait_for_page_load():
+            self.click(htmlid="return-to-weblate")
+
+    def test_dashboard(self):
+        self.do_login()
+        # Generate nice changes data
+        for day in range(365):
+            for _unused in range(int(10 + 10 * math.sin(2 * math.pi * day / 30))):
+                change = Change.objects.create(action=Change.ACTION_CREATE_PROJECT)
+                change.timestamp -= timedelta(days=day)
+                change.save()
+
+        # Screenshot search
+        self.click("Search")
+        self.screenshot("search.png")
+
+        # Render activity
+        self.click("Insights")
+        with self.wait_for_page_load():
+            self.click("Statistics")
+        self.screenshot("activity.png")
+
+    @override_settings(AUTHENTICATION_BACKENDS=TEST_BACKENDS)
+    def test_auth_backends(self):
+        user = self.do_login()
+        user.social_auth.create(provider="google-oauth2", uid=user.email)
+        user.social_auth.create(provider="github", uid="123456")
+        user.social_auth.create(provider="bitbucket", uid="weblate")
+        self.click(htmlid="user-dropdown")
+        with self.wait_for_page_load():
+            self.click(htmlid="settings-button")
+        self.click("Account")
+        self.screenshot("authentication.png")
+
+    def test_screenshot_filemask_repository_filename(self):
+        """Test of mask of files to allow discovery/update of screenshots."""
+        self.create_component()
+        self.do_login(superuser=True)
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("Browse all projects")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+        with self.wait_for_page_load():
+            self.click("Django")
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Screenshots")
+        self.screenshot("screenshot-filemask-repository-filename.png")
+
+    def test_screenshots(self):
+        """Screenshot tests."""
+        text = (
+            "Automatic translation via machine translation uses active "
+            "machine translation engines to get the best possible "
+            "translations and applies them in this project."
+        )
+        project = self.create_component()
+        language = Language.objects.get(code="cs")
+
+        source = Unit.objects.get(
+            source=text, translation__language=language
+        ).source_unit
+        source.explanation = "Help text for automatic translation tool"
+        source.save()
+        self.create_glossary(project, language)
+        source.translation.component.alert_set.all().delete()
+
+        def capture_unit(name, tab):
+            unit = Unit.objects.get(source=text, translation__language=language)
+            with self.wait_for_page_load():
+                self.driver.get(f"{self.live_server_url}{unit.get_absolute_url()}")
+            self.click(htmlid=tab)
+            self.screenshot(name)
+            with self.wait_for_page_load():
+                self.click("Dashboard")
+
+        def wait_search():
+            time.sleep(0.1)
+            WebDriverWait(self.driver, 15).until(
+                presence_of_element_located(
+                    (
+                        By.XPATH,
+                        (
+                            '//div[@id="search-results"]'
+                            '//tbody[@class="unit-listing-body"]//tr'
+                        ),
+                    )
+                )
+            )
+
+        self.do_login(superuser=True)
+        capture_unit("source-information.png", "toggle-nearby")
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("Browse all projects")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+        with self.wait_for_page_load():
+            self.click("Django")
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Screenshots")
+
+        # Upload screenshot
+        self.driver.find_element(By.ID, "id_name").send_keys("Automatic translation")
+        element = self.driver.find_element(By.ID, "id_image")
+        self.upload_file(element, get_test_file("screenshot.png"))
+        with self.wait_for_page_load():
+            element.submit()
+
+        # Perform OCR
+        if weblate.screenshots.views.HAS_OCR:
+            self.click(htmlid="screenshots-auto")
+            wait_search()
+
+            self.screenshot("screenshot-ocr.png")
+
+        # Add string manually
+        self.driver.find_element(By.ID, "search-input").send_keys(f"{text!r}")
+        self.click(htmlid="screenshots-search")
+        wait_search()
+        self.click(self.driver.find_element(By.CLASS_NAME, "add-string"))
+
+        # Unit should have screenshot assigned now
+        capture_unit("screenshot-context.png", "toggle-machinery")
+
+    def test_admin(self):
+        """Test admin interface."""
+        ConfigurationError.objects.create(
+            name="test", message="Testing configuration error"
+        )
+        self.do_login(superuser=True)
+        self.screenshot("admin-wrench.png")
+        self.create_component()
+        # Open admin page
+        self.open_admin(login=False)
+
+        # Component list
+        with self.wait_for_page_load():
+            self.click("Component lists")
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.CLASS_NAME, "addlink"))
+        element = self.driver.find_element(By.ID, "id_name")
+        element.send_keys("All components")
+        self.click("Add another Automatic component list assignment")
+        self.clear_field(
+            self.driver.find_element(By.ID, "id_autocomponentlist_set-0-project_match")
+        ).send_keys("^.*$")
+        self.clear_field(
+            self.driver.find_element(
+                By.ID, "id_autocomponentlist_set-0-component_match"
+            )
+        ).send_keys("^.*$")
+        self.screenshot("componentlist-add.png")
+        with self.wait_for_page_load():
+            element.submit()
+
+        # Ensure the component list is there
+        with self.wait_for_page_load():
+            self.click("All components")
+
+        # Announcement
+        with self.wait_for_page_load():
+            self.click("Weblate translations")
+        with self.wait_for_page_load():
+            self.click("Announcements")
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.CLASS_NAME, "addlink"))
+        Select(self.driver.find_element(By.ID, "id_project")).select_by_visible_text(
+            "WeblateOrg"
+        )
+        element = self.driver.find_element(By.ID, "id_message")
+        element.send_keys("Translations will be used only if they reach 60%.")
+        self.screenshot("announcement.png")
+        with self.wait_for_page_load():
+            element.submit()
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.CLASS_NAME, "addlink"))
+        Select(self.driver.find_element(By.ID, "id_language")).select_by_visible_text(
+            "Czech"
+        )
+        element = self.driver.find_element(By.ID, "id_message")
+        element.send_keys("Czech translators rock!")
+        with self.wait_for_page_load():
+            element.submit()
+
+        # Announcement display
+        self.view_site()
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("Browse all projects")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+        self.click("Manage")
+        self.click("Post announcement")
+        self.screenshot("announcement-project.png")
+
+        with self.wait_for_page_load():
+            self.click("Dashboard")
+        self.click(htmlid="languages-menu")
+        with self.wait_for_page_load():
+            self.click("Browse all languages")
+        with self.wait_for_page_load():
+            self.click("Czech")
+        self.screenshot("announcement-language.png")
+
+    def test_weblate(self):
+        user = self.open_admin()
+        language_regex = "^(cs|he|hu)$"
+
+        # Add project
+        with self.wait_for_page_load():
+            self.click("Projects")
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.CLASS_NAME, "addlink"))
+        self.driver.find_element(By.ID, "id_name").send_keys("WeblateOrg")
+        Select(self.driver.find_element(By.ID, "id_access_control")).select_by_value(
+            "1"
+        )
+        self.driver.find_element(By.ID, "id_web").send_keys("https://weblate.org/")
+        self.driver.find_element(By.ID, "id_instructions").send_keys(
+            "https://weblate.org/contribute/"
+        )
+        self.screenshot("add-project.png")
+        with self.wait_for_page_load():
+            self.driver.find_element(By.ID, "id_name").submit()
+
+        # Add bilingual component
+        with self.wait_for_page_load():
+            self.click("Home")
+        with self.wait_for_page_load():
+            self.click("Components")
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.CLASS_NAME, "addlink"))
+
+        self.driver.find_element(By.ID, "id_name").send_keys("Language names")
+        Select(self.driver.find_element(By.ID, "id_project")).select_by_visible_text(
+            "WeblateOrg"
+        )
+        self.driver.find_element(By.ID, "id_repo").send_keys(
+            "https://github.com/WeblateOrg/demo.git"
+        )
+        self.driver.find_element(By.ID, "id_repoweb").send_keys(
+            "https://github.com/WeblateOrg/demo/blob/"
+            "{{branch}}/{{filename}}#L{{line}}"
+        )
+        self.driver.find_element(By.ID, "id_filemask").send_keys(
+            "weblate/langdata/locale/*/LC_MESSAGES/django.po"
+        )
+        self.driver.find_element(By.ID, "id_new_base").send_keys(
+            "weblate/langdata/locale/django.pot"
+        )
+        Select(self.driver.find_element(By.ID, "id_file_format")).select_by_value("po")
+        Select(self.driver.find_element(By.ID, "id_license")).select_by_value(
+            "GPL-3.0-or-later"
+        )
+        self.clear_field(
+            self.driver.find_element(By.ID, "id_language_regex")
+        ).send_keys(language_regex)
+        self.screenshot("add-component.png")
+        # This takes long
+        with self.wait_for_page_load(timeout=1200):
+            self.driver.find_element(By.ID, "id_name").submit()
+        with self.wait_for_page_load():
+            self.click("Language names")
+
+        # Add monolingual component
+        with self.wait_for_page_load():
+            self.click("Components")
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.CLASS_NAME, "addlink"))
+        self.driver.find_element(By.ID, "id_name").send_keys("Android")
+        Select(self.driver.find_element(By.ID, "id_project")).select_by_visible_text(
+            "WeblateOrg"
+        )
+        self.driver.find_element(By.ID, "id_repo").send_keys(
+            "weblate://weblateorg/language-names"
+        )
+        self.driver.find_element(By.ID, "id_filemask").send_keys(
+            "app/src/main/res/values-*/strings.xml"
+        )
+        self.driver.find_element(By.ID, "id_template").send_keys(
+            "app/src/main/res/values/strings.xml"
+        )
+        Select(self.driver.find_element(By.ID, "id_file_format")).select_by_value(
+            "aresource"
+        )
+        Select(self.driver.find_element(By.ID, "id_license")).select_by_value("MIT")
+        self.screenshot("add-component-mono.png")
+        # This takes long
+        with self.wait_for_page_load(timeout=1200):
+            self.driver.find_element(By.ID, "id_name").submit()
+        with self.wait_for_page_load():
+            self.click("Android")
+
+        # Load Weblate project page
+        self.view_site()
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("Browse all projects")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+
+        self.screenshot("project-overview.png")
+
+        # User management
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Users")
+        element = self.driver.find_element(By.ID, "id_user")
+        element.send_keys("testuser")
+        with self.wait_for_page_load():
+            element.submit()
+        with self.wait_for_page_load():
+            self.click("Access control")
+        self.screenshot("manage-users.png")
+        # Automatic suggestions
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Automatic suggestions")
+        self.screenshot("project-machinery.png")
+        # Access control settings
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Settings")
+        self.click("Access")
+        self.screenshot("project-access.png")
+        self.click("Workflow")
+        self.screenshot("project-workflow.png")
+        # The project is now watched
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+
+        # Engage page
+        self.click("Share")
+        with self.wait_for_page_load():
+            self.click("Status widgets")
+        self.screenshot("promote.png")
+        with self.wait_for_page_load():
+            self.click(htmlid="engage-link")
+        self.screenshot("engage.png")
+        with self.wait_for_page_load():
+            self.click(htmlid="engage-project")
+
+        self.click("Components")
+        with self.wait_for_page_load():
+            self.click("Language names")
+
+        # Repository
+        self.click("Manage")
+        self.click("Repository maintenance")
+        time.sleep(0.2)
+        self.click("Manage")
+        self.screenshot("component-repository.png")
+
+        # Add-ons
+        with self.wait_for_page_load():
+            self.click("Add-ons")
+        self.screenshot("addons.png")
+        with self.wait_for_page_load():
+            self.click(
+                self.driver.find_element(
+                    By.XPATH, '//button[@data-addon="weblate.discovery.discovery"]'
+                )
+            )
+        element = self.driver.find_element(By.ID, "id_match")
+        element.send_keys(
+            "weblate/locale/(?P<language>[^/]*)/LC_MESSAGES/"
+            "(?P<component>[^/]*)\\.po"
+        )
+        self.clear_field(
+            self.driver.find_element(By.ID, "id_language_regex")
+        ).send_keys(language_regex)
+        self.driver.find_element(By.ID, "id_new_base_template").send_keys(
+            "weblate/locale/{{ component }}.pot"
+        )
+        self.clear_field(self.driver.find_element(By.ID, "id_name_template")).send_keys(
+            "{{ component|title }}"
+        )
+        Select(self.driver.find_element(By.ID, "id_file_format")).select_by_value("po")
+        with self.wait_for_page_load():
+            element.submit()
+        self.screenshot("addon-discovery.png")
+        element = self.driver.find_element(By.ID, "id_confirm")
+        self.click(element)
+        # This takes long
+        with self.wait_for_page_load(timeout=1200):
+            element.submit()
+        with self.wait_for_page_load():
+            self.click("Language names")
+
+        # Reports
+        self.click("Insights")
+        self.click("Translation reports")
+        self.click("Insights")
+        self.screenshot("reporting.png")
+
+        # Contributor agreement
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Settings")
+        element = self.driver.find_element(By.ID, "id_agreement")
+        element.send_keys("This is an agreement.")
+        with self.wait_for_page_load():
+            element.submit()
+        with self.wait_for_page_load():
+            self.click("Language names")
+        self.screenshot("contributor-agreement.png")
+        with self.wait_for_page_load():
+            self.click("View contributor agreement")
+        element = self.driver.find_element(By.ID, "id_confirm")
+        self.click(element)
+        with self.wait_for_page_load():
+            element.submit()
+
+        # Translation page
+        with self.wait_for_page_load():
+            self.click("Czech")
+        with self.wait_for_page_load():
+            self.click("Django")
+        self.screenshot("strings-to-check.png")
+        self.click("Files")
+        self.click("Upload translation")
+        self.click("Files")
+        self.screenshot("file-upload.png")
+        self.click("Customize download")
+        self.click("Files")
+        self.screenshot("file-download.png")
+        self.click("Tools")
+        self.click("Automatic translation")
+        self.click(htmlid="id_auto_source_1")
+        self.click("Tools")
+        self.screenshot("automatic-translation.png")
+        self.click("Search")
+        element = self.driver.find_element(By.ID, "id_q")
+        element.send_keys("'%(count)s word'")
+        with self.wait_for_page_load():
+            element.submit()
+        self.click("History")
+        self.screenshot("format-highlight.png")
+        self.click("Comments")
+        self.screenshot("plurals.png")
+
+        # Test search dropdown
+        dropdown = self.driver.find_element(By.ID, "query-dropdown")
+        dropdown.click()
+        time.sleep(0.2)
+        self.screenshot("query-dropdown.png")
+        with self.wait_for_page_load():
+            self.click(
+                self.driver.find_element(By.PARTIAL_LINK_TEXT, "Untranslated strings")
+            )
+        self.driver.find_element(By.ID, "id_34a4642999e44a2b_0")
+
+        # Test sort dropdown
+        sort = self.driver.find_element(By.ID, "query-sort-dropdown")
+        sort.click()
+        time.sleep(0.2)
+        self.screenshot("query-sort.png")
+        with self.wait_for_page_load():
+            self.click("Position")
+
+        # Return to original unit
+        element = self.driver.find_element(By.ID, "id_q")
+        self.clear_field(element)
+        element.send_keys("'%(count)s word'")
+        with self.wait_for_page_load():
+            element.submit()
+
+        # Trigger check
+        self.clear_field(self.driver.find_element(By.ID, "id_a2a808c8ccbece08_0"))
+        element = self.driver.find_element(By.ID, "id_a2a808c8ccbece08_1")
+        self.clear_field(element)
+        element.send_keys("několik slov")
+        with self.wait_for_page_load():
+            element.submit()
+        self.screenshot("checks.png")
+
+        # Secondary language display
+        user.profile.secondary_languages.set(Language.objects.filter(code__in=("he",)))
+        with self.wait_for_page_load():
+            self.click("Czech")
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "All strings"))
+        self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "Other languages"))
+        self.screenshot("secondary-language.png")
+
+        # RTL translation
+        with self.wait_for_page_load():
+            self.click("Django")
+        with self.wait_for_page_load():
+            self.click("Hebrew")
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "All strings"))
+        self.screenshot("visual-keyboard.png")
+
+        # Profile
+        self.click(htmlid="user-dropdown")
+        with self.wait_for_page_load():
+            self.click(htmlid="settings-button")
+        self.click("Preferences")
+        self.screenshot("dashboard-dropdown.png")
+        self.click("Notifications")
+        self.screenshot("profile-subscriptions.png")
+        self.click("Licenses")
+        self.screenshot("profile-licenses.png")
+
+        # Dashboard
+        with self.wait_for_page_load():
+            self.click("Dashboard")
+        time.sleep(0.2)
+        self.screenshot("your-translations.png")
+
+    @modify_settings(INSTALLED_APPS={"append": "weblate.billing"})
+    def test_add_component(self):
+        """Test user adding project and component."""
+        user = self.do_login()
+        create_test_billing(user)
+
+        # Open billing page
+        self.click(htmlid="user-dropdown")
+        with self.wait_for_page_load():
+            self.click(htmlid="billing-button")
+        self.screenshot("user-billing.png")
+
+        # Click on add project
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.CLASS_NAME, "billing-add-project"))
+
+        # Add project
+        self.driver.find_element(By.ID, "id_name").send_keys("WeblateOrg")
+        self.driver.find_element(By.ID, "id_web").send_keys("https://weblate.org/")
+        self.driver.find_element(By.ID, "id_instructions").send_keys(
+            "https://weblate.org/contribute/"
+        )
+        self.screenshot("user-add-project.png")
+        with self.wait_for_page_load():
+            self.driver.find_element(By.ID, "id_name").submit()
+        self.screenshot("user-add-project-done.png")
+
+        # Click on add component
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.CLASS_NAME, "project-add-component"))
+
+        # Add component
+        self.driver.find_element(By.ID, "id_name").send_keys("Language names")
+        self.driver.find_element(By.ID, "id_repo").send_keys(
+            "https://github.com/WeblateOrg/demo.git"
+        )
+        self.screenshot("user-add-component-init.png")
+        with self.wait_for_page_load(timeout=1200):
+            self.driver.find_element(By.ID, "id_name").submit()
+
+        self.screenshot("user-add-component-discovery.png")
+        self.driver.find_element(By.ID, "id_discovery_1").click()
+        with self.wait_for_page_load(timeout=1200):
+            self.driver.find_element(By.ID, "id_name").submit()
+
+        self.driver.find_element(By.ID, "id_repoweb").send_keys(
+            "https://github.com/WeblateOrg/demo/blob/"
+            "{{branch}}/{{filename}}#L{{line}}"
+        )
+        self.driver.find_element(By.ID, "id_filemask").send_keys(
+            "weblate/langdata/locale/*/LC_MESSAGES/django.po"
+        )
+        self.driver.find_element(By.ID, "id_new_base").send_keys(
+            "weblate/langdata/locale/django.pot"
+        )
+        Select(self.driver.find_element(By.ID, "id_file_format")).select_by_value("po")
+        Select(self.driver.find_element(By.ID, "id_license")).select_by_value(
+            "GPL-3.0-or-later"
+        )
+        self.clear_field(
+            self.driver.find_element(By.ID, "id_language_regex")
+        ).send_keys("^(cs|he|hu)$")
+        self.screenshot("user-add-component.png")
+
+    def test_alerts(self):
+        project = Project.objects.create(name="WeblateOrg", slug="weblateorg")
+        Component.objects.create(
+            name="Duplicates",
+            slug="duplicates",
+            project=project,
+            repo="https://github.com/WeblateOrg/test.git",
+            filemask="po-duplicates/*.dpo",
+            new_base="po-duplicates/hello.pot",
+            file_format="po",
+        )
+        self.do_login(superuser=True)
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("Browse all projects")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+        with self.wait_for_page_load():
+            self.click("Duplicates")
+        self.click("Alerts")
+        self.screenshot("alerts.png")
+
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Community localization checklist")
+        self.screenshot("guide.png")
+
+    def test_fonts(self):
+        self.create_component()
+        self.do_login(superuser=True)
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("Browse all projects")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Fonts")
+
+        self.click(htmlid="tab_fonts")
+
+        # Upload font
+        element = self.driver.find_element(By.ID, "id_font")
+        self.upload_file(element, FONT)
+        with self.wait_for_page_load():
+            self.click(htmlid="upload_font_submit")
+
+        self.screenshot("font-edit.png")
+
+        with self.wait_for_page_load():
+            self.click("Fonts")
+
+        # Upload second font
+        element = self.driver.find_element(By.ID, "id_font")
+        self.upload_file(element, SOURCE_FONT)
+        with self.wait_for_page_load():
+            self.click(htmlid="upload_font_submit")
+
+        with self.wait_for_page_load():
+            self.click("Fonts")
+
+        self.screenshot("font-list.png")
+
+        self.click(htmlid="tab_groups")
+
+        # Create group
+        Select(self.driver.find_element(By.ID, "id_group_font")).select_by_visible_text(
+            "Source Sans 3 Bold"
+        )
+        element = self.driver.find_element(By.ID, "id_group_name")
+        element.send_keys("default-font")
+        with self.wait_for_page_load():
+            element.submit()
+
+        Select(self.driver.find_element(By.ID, "id_font")).select_by_visible_text(
+            "Kurinto Sans Regular"
+        )
+        element = self.driver.find_element(By.ID, "id_language")
+        Select(element).select_by_visible_text("Japanese")
+        with self.wait_for_page_load():
+            element.submit()
+        Select(self.driver.find_element(By.ID, "id_font")).select_by_visible_text(
+            "Kurinto Sans Regular"
+        )
+        element = self.driver.find_element(By.ID, "id_language")
+        Select(element).select_by_visible_text("Korean")
+        with self.wait_for_page_load():
+            element.submit()
+
+        self.screenshot("font-group-edit.png")
+
+        with self.wait_for_page_load():
+            self.click("Font groups")
+
+        self.screenshot("font-group-list.png")
+
+    def test_backup(self):
+        self.create_temp()
+        try:
+            self.open_manage()
+            self.screenshot("support.png")
+            with self.wait_for_page_load():
+                self.click("Backups")
+            element = self.driver.find_element(By.ID, "id_repository")
+            element.send_keys(self.tempdir)
+            with self.wait_for_page_load():
+                element.submit()
+            with self.wait_for_page_load():
+                self.click(self.driver.find_element(By.CLASS_NAME, "runbackup"))
+            self.click(self.driver.find_element(By.CLASS_NAME, "createdbackup"))
+            time.sleep(0.2)
+            self.screenshot("backups.png")
+            SupportStatus.objects.create(secret="123", name="community")
+            with self.wait_for_page_load():
+                self.click("Weblate status")
+            self.screenshot("support-discovery.png")
+        finally:
+            self.remove_temp()
+
+    def test_explanation(self):
+        project = self.create_component()
+        Component.objects.create(
+            name="Android",
+            slug="android",
+            project=project,
+            repo="weblate://weblateorg/language-names",
+            filemask="app/src/main/res/values-*/strings.xml",
+            template="app/src/main/res/values/strings.xml",
+            file_format="aresource",
+        )
+
+        self.do_login(superuser=True)
+        self.click(htmlid="projects-menu")
+        with self.wait_for_page_load():
+            self.click("Browse all projects")
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Labels")
+        element = self.driver.find_element(By.ID, "id_name")
+        element.send_keys("Current sprint")
+        self.click(self.driver.find_element(By.CLASS_NAME, "label-green"))
+        with self.wait_for_page_load():
+            element.submit()
+        element = self.driver.find_element(By.ID, "id_name")
+        element.send_keys("Next sprint")
+        self.click(self.driver.find_element(By.CLASS_NAME, "label-aqua"))
+        with self.wait_for_page_load():
+            element.submit()
+        self.screenshot("labels.png")
+
+        # Navigate to component
+        with self.wait_for_page_load():
+            self.click("WeblateOrg")
+        with self.wait_for_page_load():
+            self.click("Android")
+
+        # Edit variant configuration
+        self.click("Manage")
+        with self.wait_for_page_load():
+            self.click("Settings")
+        self.click("Translation")
+        element = self.driver.find_element(By.ID, "id_variant_regex")
+        element.send_keys("_(short|min)$")
+        self.screenshot("variants-settings.png")
+        with self.wait_for_page_load():
+            element.submit()
+
+        # Navigate to the source language
+        with self.wait_for_page_load():
+            self.click("Android")
+        with self.wait_for_page_load():
+            self.click("English")
+        self.screenshot("source-review.png")
+
+        # Find string with variants
+        self.click("Search")
+        element = self.driver.find_element(By.ID, "id_q")
+        element.send_keys("Monday")
+        with self.wait_for_page_load():
+            element.submit()
+        self.screenshot("source-review-detail.png")
+
+        # Display variants
+        self.click(htmlid="toggle-variants")
+        self.screenshot("variants-translate.png")
+
+        # Edit context
+        self.click(htmlid="edit-context")
+        time.sleep(0.2)
+        self.screenshot("source-review-edit.png")
+
+        # Close modal dialog
+        self.driver.find_element(By.ID, "id_extra_flags").send_keys(Keys.ESCAPE)
+        time.sleep(0.2)
+
+    def test_glossary(self):
+        self.do_login()
+        project = self.create_component()
+        language = Language.objects.get(code="cs")
+        glossary = self.create_glossary(project, language)
+
+        self.driver.get(f"{self.live_server_url}{glossary.get_absolute_url()}")
+        self.screenshot("glossary-component.png")
+
+        with self.wait_for_page_load():
+            self.click("Czech")
+
+        with self.wait_for_page_load():
+            self.click("Browse")
+        self.screenshot("glossary-browse.png")
+
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "projekt"))
+
+        self.click(htmlid="unit_tools_dropdown")
+        self.screenshot("glossary-tools.png")

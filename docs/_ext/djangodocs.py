@@ -1,66 +1,53 @@
-"""
-Sphinx plugins for Django documentation.
-"""
+"""Sphinx plugins for Weblate documentation."""
 import re
+
+from docutils.nodes import literal
 from sphinx import addnodes
+from sphinx.domains.std import Cmdoption
 
 # RE for option descriptions without a '--' prefix
-simple_option_desc_re = re.compile(
-    r'([-_a-zA-Z0-9]+)(\s*.*?)(?=,\s+(?:/|-|--)|$)')
+simple_option_desc_re = re.compile(r"([-_a-zA-Z0-9]+)(\s*.*?)(?=,\s+(?:/|-|--)|$)")
+
+
+class WeblateCommandLiteral(literal):
+    def __init__(self, rawsource="", text="", *children, **attributes):
+        if not text:
+            text = "weblate "
+        super().__init__(rawsource, text, *children, **attributes)
 
 
 def setup(app):
     app.add_crossref_type(
-        directivename="setting",
-        rolename="setting",
-        indextemplate="pair: %s; setting",
+        directivename="setting", rolename="setting", indextemplate="pair: %s; setting"
     )
-    app.add_description_unit(
+    app.add_object_type(
+        directivename="weblate-admin",
+        rolename="wladmin",
+        indextemplate="pair: %s; weblate admin command",
+        parse_node=parse_weblate_admin_node,
+        ref_nodeclass=WeblateCommandLiteral,
+    )
+    app.add_directive("weblate-admin-option", Cmdoption)
+    app.add_object_type(
         directivename="django-admin",
         rolename="djadmin",
         indextemplate="pair: %s; django-admin command",
         parse_node=parse_django_admin_node,
     )
-    app.add_description_unit(
-        directivename="django-admin-option",
-        rolename="djadminopt",
-        indextemplate="pair: %s; django-admin command-line option",
-        parse_node=parse_django_adminopt_node,
-    )
+
+
+def parse_weblate_admin_node(env, sig, signode):
+    command = sig.split(" ")[0]
+    # Context for options
+    env.ref_context["std:program"] = command
+    title = f"weblate {sig}"
+    signode += addnodes.desc_name(title, title)
+    return command
 
 
 def parse_django_admin_node(env, sig, signode):
-    command = sig.split(' ')[0]
-    env._django_curr_admin_command = command
-    title = "manage.py %s" % sig
+    command = sig.split(" ")[0]
+    env.ref_context["std:program"] = command
+    title = "django-admin %s" % sig
     signode += addnodes.desc_name(title, title)
-    return sig
-
-
-def parse_django_adminopt_node(env, sig, signode):
-    """A copy of sphinx.directives.CmdoptionDesc.parse_signature()"""
-    from sphinx.domains.std import option_desc_re
-    count = 0
-    firstname = ''
-    for m in option_desc_re.finditer(sig):
-        optname, args = m.groups()
-        if count:
-            signode += addnodes.desc_addname(', ', ', ')
-        signode += addnodes.desc_name(optname, optname)
-        signode += addnodes.desc_addname(args, args)
-        if not count:
-            firstname = optname
-        count += 1
-    if not count:
-        for m in simple_option_desc_re.finditer(sig):
-            optname, args = m.groups()
-            if count:
-                signode += addnodes.desc_addname(', ', ', ')
-            signode += addnodes.desc_name(optname, optname)
-            signode += addnodes.desc_addname(args, args)
-            if not count:
-                firstname = optname
-            count += 1
-    if not firstname:
-        raise ValueError
-    return firstname
+    return command

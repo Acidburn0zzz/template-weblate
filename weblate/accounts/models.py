@@ -1,637 +1,581 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-from __future__ import unicode_literals
-import os
-import re
-import sys
-import binascii
-from smtplib import SMTPException
+import datetime
+from typing import Set
 
-from django.db import models
-from django.dispatch import receiver
+from appconf import AppConf
 from django.conf import settings
-from django.contrib.auth.signals import user_logged_in, user_logged_out
-from django.db.models.signals import post_save, post_migrate
-from django.utils.translation import ugettext_lazy as _
-from django.utils.encoding import python_2_unicode_compatible, force_text
-from django.contrib.auth.models import Group, User, Permission
-from django.utils import translation as django_translation
-from django.template.loader import render_to_string
-from django.core.mail import EmailMultiAlternatives, get_connection
-from django.utils.translation import LANGUAGE_SESSION_KEY
+from django.contrib import admin
+from django.contrib.auth.signals import user_logged_in
+from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
+from django.db import models, transaction
+from django.db.models import F, Q
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from django.utils import timezone
+from django.utils.functional import cached_property
+from django.utils.translation import get_language, gettext
+from django.utils.translation import gettext_lazy as _
+from rest_framework.authtoken.models import Token
+from social_django.models import UserSocialAuth
 
-from social.apps.django_app.default.models import UserSocialAuth
-
-from weblate.lang.models import Language
-from weblate.trans.site import get_site_url, get_site_domain
-from weblate.trans.fields import RegexField
 from weblate.accounts.avatar import get_user_display
-from weblate.trans.util import report_error
-from weblate.trans.signals import user_pre_delete
-from weblate import VERSION
-from weblate.logger import LOGGER
-from weblate.appsettings import ANONYMOUS_USER_NAME, SITE_TITLE
+from weblate.accounts.data import create_default_notifications
+from weblate.accounts.notifications import FREQ_CHOICES, NOTIFICATIONS, SCOPE_CHOICES
+from weblate.accounts.tasks import notify_auditlog
+from weblate.auth.models import User
+from weblate.lang.models import Language
+from weblate.trans.defines import EMAIL_LENGTH
+from weblate.trans.models import ComponentList
+from weblate.utils import messages
+from weblate.utils.decorators import disable_for_loaddata
+from weblate.utils.fields import EmailField, JSONField
+from weblate.utils.render import validate_editor
+from weblate.utils.request import get_ip_address, get_user_agent
+from weblate.utils.token import get_token
 
 
-def send_mails(mails):
-    """Sends multiple mails in single connection."""
-    try:
-        connection = get_connection()
-        connection.send_messages(mails)
-    except SMTPException as error:
-        LOGGER.error('Failed to send email: %s', error)
-        report_error(error, sys.exc_info())
+class WeblateAccountsConf(AppConf):
+    """Accounts settings."""
 
+    # Disable avatars
+    ENABLE_AVATARS = True
 
-def get_author_name(user, email=True):
-    """Returns formatted author name with email."""
-    # Get full name from database
-    full_name = user.first_name
+    # Avatar URL prefix
+    AVATAR_URL_PREFIX = "https://www.gravatar.com/"
 
-    # Use username if full name is empty
-    if full_name == '':
-        full_name = user.username
+    # Avatar fallback image
+    # See http://en.gravatar.com/site/implement/images/ for available choices
+    AVATAR_DEFAULT_IMAGE = "identicon"
 
-    # Add email if we are asked for it
-    if not email:
-        return full_name
-    return '%s <%s>' % (full_name, user.email)
+    # Enable registrations
+    REGISTRATION_OPEN = True
 
+    # Allow registration from certain backends
+    REGISTRATION_ALLOW_BACKENDS = []
 
-def notify_merge_failure(subproject, error, status):
-    '''
-    Notification on merge failure.
-    '''
-    subscriptions = Profile.objects.subscribed_merge_failure(
-        subproject.project,
-    )
-    users = set()
-    mails = []
-    for subscription in subscriptions:
-        mails.append(
-            subscription.notify_merge_failure(subproject, error, status)
-        )
-        users.add(subscription.user_id)
+    # Allow rebinding to existing accounts
+    REGISTRATION_REBIND = False
 
-    for owner in subproject.project.owners.all():
-        mails.append(
-            owner.profile.notify_merge_failure(
-                subproject, error, status
-            )
-        )
+    # Registration email filter
+    REGISTRATION_EMAIL_MATCH = ".*"
 
-    # Notify admins
-    mails.append(
-        get_notification_email(
-            'en',
-            'ADMINS',
-            'merge_failure',
-            subproject,
-            {
-                'subproject': subproject,
-                'status': status,
-                'error': error,
-            }
-        )
-    )
-    send_mails(mails)
+    # Captcha for registrations
+    REGISTRATION_CAPTCHA = True
 
+    REGISTRATION_HINTS = {}
 
-def notify_parse_error(subproject, translation, error):
-    '''
-    Notification on parse error.
-    '''
-    subscriptions = Profile.objects.subscribed_merge_failure(
-        subproject.project,
-    )
-    users = set()
-    mails = []
-    for subscription in subscriptions:
-        mails.append(
-            subscription.notify_parse_error(
-                subproject, translation, error
-            )
-        )
-        users.add(subscription.user_id)
+    # How long to keep auditlog entries
+    AUDITLOG_EXPIRY = 180
 
-    for owner in subproject.project.owners.all():
-        mails.append(
-            owner.profile.notify_parse_error(
-                subproject, translation, error
-            )
-        )
+    # Auto-watch setting for new users
+    DEFAULT_AUTO_WATCH = True
 
-    # Notify admins
-    mails.append(
-        get_notification_email(
-            'en',
-            'ADMINS',
-            'parse_error',
-            subproject,
-            {
-                'subproject': subproject,
-                'translation': translation,
-                'error': error,
-            }
-        )
-    )
-    send_mails(mails)
+    CONTACT_FORM = "reply-to"
 
+    PRIVATE_COMMIT_EMAIL_TEMPLATE = "{username}@users.noreply.{site_domain}"
+    PRIVATE_COMMIT_EMAIL_OPT_IN = True
 
-def notify_new_string(translation):
-    '''
-    Notification on new string to translate.
-    '''
-    mails = []
-    subscriptions = Profile.objects.subscribed_new_string(
-        translation.subproject.project, translation.language
-    )
-    for subscription in subscriptions:
-        mails.append(
-            subscription.notify_new_string(translation)
-        )
+    # Auth0 provider default image & title on login page
+    SOCIAL_AUTH_AUTH0_IMAGE = "auth0.svg"
+    SOCIAL_AUTH_AUTH0_TITLE = "Auth0"
+    SOCIAL_AUTH_SAML_IMAGE = "saml.svg"
+    SOCIAL_AUTH_SAML_TITLE = "SAML"
 
-    send_mails(mails)
-
-
-def notify_new_language(subproject, language, user):
-    '''
-    Notify subscribed users about new language requests
-    '''
-    mails = []
-    subscriptions = Profile.objects.subscribed_new_language(
-        subproject.project,
-        user
-    )
-    users = set()
-    for subscription in subscriptions:
-        mails.append(
-            subscription.notify_new_language(subproject, language, user)
-        )
-        users.add(subscription.user_id)
-
-    for owner in subproject.project.owners.all():
-        mails.append(
-            owner.profile.notify_new_language(
-                subproject, language, user
-            )
-        )
-
-    # Notify admins
-    mails.append(
-        get_notification_email(
-            'en',
-            'ADMINS',
-            'new_language',
-            subproject,
-            {
-                'language': language,
-                'user': user,
-            },
-            user=user,
-        )
+    # Login required URLs
+    LOGIN_REQUIRED_URLS = []
+    LOGIN_REQUIRED_URLS_EXCEPTIONS = (
+        r"{URL_PREFIX}/accounts/(.*)$",  # Required for login
+        r"{URL_PREFIX}/admin/login/(.*)$",  # Required for admin login
+        r"{URL_PREFIX}/static/(.*)$",  # Required for development mode
+        r"{URL_PREFIX}/widgets/(.*)$",  # Allowing public access to widgets
+        r"{URL_PREFIX}/data/(.*)$",  # Allowing public access to data exports
+        r"{URL_PREFIX}/hooks/(.*)$",  # Allowing public access to notification hooks
+        r"{URL_PREFIX}/healthz/$",  # Allowing public access to health check
+        r"{URL_PREFIX}/api/(.*)$",  # Allowing access to API
+        r"{URL_PREFIX}/js/i18n/$",  # JavaScript localization
+        r"{URL_PREFIX}/contact/$",  # Optional for contact form
+        r"{URL_PREFIX}/legal/(.*)$",  # Optional for legal app
+        r"{URL_PREFIX}/avatar/(.*)$",  # Optional for avatars
     )
 
-    send_mails(mails)
+    class Meta:
+        prefix = ""
 
 
-def notify_new_translation(unit, oldunit, user):
-    '''
-    Notify subscribed users about new translation
-    '''
-    mails = []
-    subscriptions = Profile.objects.subscribed_any_translation(
-        unit.translation.subproject.project,
-        unit.translation.language,
-        user
+class Subscription(models.Model):
+    user = models.ForeignKey(User, on_delete=models.deletion.CASCADE)
+    notification = models.CharField(
+        choices=[n.get_choice() for n in NOTIFICATIONS], max_length=100
     )
-    for subscription in subscriptions:
-        mails.append(
-            subscription.notify_any_translation(unit, oldunit)
-        )
-
-    send_mails(mails)
-
-
-def notify_new_contributor(unit, user):
-    '''
-    Notify about new contributor.
-    '''
-    mails = []
-    subscriptions = Profile.objects.subscribed_new_contributor(
-        unit.translation.subproject.project,
-        unit.translation.language,
-        user
+    scope = models.IntegerField(choices=SCOPE_CHOICES)
+    frequency = models.IntegerField(choices=FREQ_CHOICES)
+    project = models.ForeignKey(
+        "trans.Project", on_delete=models.deletion.CASCADE, null=True
     )
-    for subscription in subscriptions:
-        mails.append(
-            subscription.notify_new_contributor(
-                unit.translation, user
-            )
-        )
-
-    send_mails(mails)
-
-
-def notify_new_suggestion(unit, suggestion, user):
-    '''
-    Notify about new suggestion.
-    '''
-    mails = []
-    subscriptions = Profile.objects.subscribed_new_suggestion(
-        unit.translation.subproject.project,
-        unit.translation.language,
-        user
+    component = models.ForeignKey(
+        "trans.Component", on_delete=models.deletion.CASCADE, null=True
     )
-    for subscription in subscriptions:
-        mails.append(
-            subscription.notify_new_suggestion(
-                unit.translation,
-                suggestion,
-                unit
-            )
-        )
+    onetime = models.BooleanField(default=False)
 
-    send_mails(mails)
-
-
-def notify_new_comment(unit, comment, user, report_source_bugs):
-    '''
-    Notify about new comment.
-    '''
-    mails = []
-    subscriptions = Profile.objects.subscribed_new_comment(
-        unit.translation.subproject.project,
-        comment.language,
-        user
-    )
-    for subscription in subscriptions:
-        mails.append(
-            subscription.notify_new_comment(unit, comment, user)
-        )
-
-    # Notify upstream
-    if comment.language is None and report_source_bugs != '':
-        send_notification_email(
-            'en',
-            report_source_bugs,
-            'new_comment',
-            unit.translation,
-            {
-                'unit': unit,
-                'comment': comment,
-                'subproject': unit.translation.subproject,
-            },
-            user=user,
-        )
-
-    send_mails(mails)
-
-
-def get_notification_email(language, email, notification,
-                           translation_obj=None, context=None, headers=None,
-                           user=None, info=None):
-    '''
-    Renders notification email.
-    '''
-    cur_language = django_translation.get_language()
-    context = context or {}
-    headers = headers or {}
-    references = None
-    if 'unit' in context:
-        unit = context['unit']
-        references = '{0}/{1}/{2}/{3}'.format(
-            unit.translation.subproject.project.slug,
-            unit.translation.subproject.slug,
-            unit.translation.language.code,
-            unit.id
-        )
-    if references is not None:
-        references = '<{0}@{1}>'.format(references, get_site_domain())
-        headers['In-Reply-To'] = references
-        headers['References'] = references
-    try:
-        if info is None:
-            info = force_text(translation_obj)
-        LOGGER.info(
-            'sending notification %s on %s to %s',
-            notification,
-            info,
-            email
-        )
-
-        # Load user language
-        if language is not None:
-            django_translation.activate(language)
-
-        # Template name
-        context['subject_template'] = 'mail/{}_subject.txt'.format(
-            notification
-        )
-
-        # Adjust context
-        context['current_site_url'] = get_site_url()
-        if translation_obj is not None:
-            context['translation'] = translation_obj
-            context['translation_url'] = get_site_url(
-                translation_obj.get_absolute_url()
-            )
-        context['site_title'] = SITE_TITLE
-
-        # Render subject
-        subject = render_to_string(
-            context['subject_template'],
-            context
-        ).strip()
-
-        # Render body
-        body = render_to_string(
-            'mail/{}.txt'.format(notification),
-            context
-        )
-        html_body = render_to_string(
-            'mail/{}.html'.format(notification),
-            context
-        )
-
-        # Define headers
-        headers['Auto-Submitted'] = 'auto-generated'
-        headers['X-AutoGenerated'] = 'yes'
-        headers['Precedence'] = 'bulk'
-        headers['X-Mailer'] = 'Weblate {}'.format(VERSION)
-
-        # Reply to header
-        if user is not None:
-            headers['Reply-To'] = user.email
-
-        # List of recipients
-        if email == 'ADMINS':
-            emails = [a[1] for a in settings.ADMINS]
-        else:
-            emails = [email]
-
-        # Create message
-        email = EmailMultiAlternatives(
-            settings.EMAIL_SUBJECT_PREFIX + subject,
-            body,
-            to=emails,
-            headers=headers,
-        )
-        email.attach_alternative(
-            html_body,
-            'text/html'
-        )
-
-        # Return the mail
-        return email
-    finally:
-        django_translation.activate(cur_language)
-
-
-def send_notification_email(language, email, notification,
-                            translation_obj=None, context=None, headers=None,
-                            user=None, info=None):
-    '''
-    Renders and sends notification email.
-    '''
-    email = get_notification_email(
-        language, email, notification, translation_obj, context, headers,
-        user, info
-    )
-    send_mails([email])
-
-
-@python_2_unicode_compatible
-class VerifiedEmail(models.Model):
-    '''
-    Storage for verified emails from auth backends.
-    '''
-    social = models.ForeignKey(UserSocialAuth)
-    email = models.EmailField(max_length=254)
+    class Meta:
+        unique_together = [("notification", "scope", "project", "component", "user")]
+        verbose_name = "Notification subscription"
+        verbose_name_plural = "Notification subscriptions"
 
     def __str__(self):
-        return '{0} - {1}'.format(
-            self.social.user.username,
-            self.email
+        return "{}:{},{} ({},{})".format(
+            self.user.username,
+            self.get_scope_display(),
+            self.get_notification_display(),
+            self.project,
+            self.component,
         )
 
 
-class ProfileManager(models.Manager):
-    '''
-    Manager providing shortcuts for subscription queries.
-    '''
-    # pylint: disable=W0232
+ACCOUNT_ACTIVITY = {
+    "password": _("Password changed."),
+    "username": _("Username changed from {old} to {new}."),
+    "email": _("E-mail changed from {old} to {new}."),
+    "full_name": _("Full name changed from {old} to {new}."),
+    "reset-request": _("Password reset requested."),
+    "reset": _("Password reset confirmed, password turned off."),
+    "auth-connect": _("Configured sign in using {method} ({name})."),
+    "auth-disconnect": _("Removed sign in using {method} ({name})."),
+    "login": _("Signed in using {method} ({name})."),
+    "login-new": _("Signed in using {method} ({name}) from a new device."),
+    "register": _("Somebody attempted to register with your e-mail."),
+    "connect": _("Somebody attempted to register using your e-mail address."),
+    "failed-auth": _("Could not sign in using {method} ({name})."),
+    "locked": _("Account locked due to many failed sign in attempts."),
+    "removed": _("Account and all private data removed."),
+    "tos": _("Agreement with Terms of Service {date}."),
+    "invited": _("Invited to {site_title} by {username}."),
+    "trial": _("Started trial period."),
+    "sent-email": _("Sent confirmation mail to {email}."),
+    "autocreated": _(
+        "The system created a user to track authorship of "
+        "translations uploaded by other user."
+    ),
+    "blocked": _("Access to project {project} was blocked"),
+}
+# Override activity messages based on method
+ACCOUNT_ACTIVITY_METHOD = {
+    "password": {
+        "auth-connect": _("Configured password to sign in."),
+        "login": _("Signed in using password."),
+        "login-new": _("Signed in using password from a new device."),
+        "failed-auth": _("Could not sign in using password."),
+    }
+}
 
-    def subscribed_any_translation(self, project, language, user):
+EXTRA_MESSAGES = {
+    "locked": _("To restore access to your account, please reset your password."),
+    "blocked": _(
+        "Please contact project maintainers if you feel this is inappropriate."
+    ),
+}
+
+NOTIFY_ACTIVITY = {
+    "password",
+    "reset",
+    "auth-connect",
+    "auth-disconnect",
+    "register",
+    "connect",
+    "locked",
+    "removed",
+    "login-new",
+    "email",
+    "username",
+    "full_name",
+    "blocked",
+}
+
+
+class AuditLogManager(models.Manager):
+    def is_new_login(self, user, address, user_agent):
+        """
+        Checks whether this login is coming from a new device.
+
+        Currently based purely on the IP address.
+        """
+        logins = self.filter(user=user, activity="login-new")
+
+        # First login
+        if not logins.exists():
+            return False
+
+        return not logins.filter(Q(address=address) | Q(user_agent=user_agent)).exists()
+
+    def create(self, user, request, activity, **params):
+        address = get_ip_address(request)
+        user_agent = get_user_agent(request)
+        if activity == "login" and self.is_new_login(user, address, user_agent):
+            activity = "login-new"
+        return super().create(
+            user=user,
+            activity=activity,
+            address=address,
+            user_agent=user_agent,
+            params=params,
+        )
+
+
+class AuditLogQuerySet(models.QuerySet):
+    def get_after(self, user, after, activity):
+        """
+        Get user activities of given type after another activity.
+
+        This is mostly used for rate limiting, as it can return the number of failed
+        authentication attempts since last login.
+        """
+        try:
+            latest_login = self.filter(user=user, activity=after).order()[0]
+            kwargs = {"timestamp__gte": latest_login.timestamp}
+        except IndexError:
+            kwargs = {}
+        return self.filter(user=user, activity=activity, **kwargs)
+
+    def get_past_passwords(self, user):
+        """Get user activities with password change."""
+        start = timezone.now() - datetime.timedelta(days=settings.AUTH_PASSWORD_DAYS)
         return self.filter(
-            subscribe_any_translation=True,
-            subscriptions=project,
-            languages=language
-        ).exclude(
-            user=user
+            user=user, activity__in=("reset", "password"), timestamp__gt=start
         )
 
-    def subscribed_new_language(self, project, user):
-        return self.filter(
-            subscribe_new_language=True,
-            subscriptions=project,
-        ).exclude(
-            user=user
+    def order(self):
+        return self.order_by("-timestamp")
+
+
+class AuditLog(models.Model):
+    """User audit log storage."""
+
+    user = models.ForeignKey(User, on_delete=models.deletion.CASCADE, null=True)
+    activity = models.CharField(
+        max_length=20,
+        choices=[(a, a) for a in sorted(ACCOUNT_ACTIVITY.keys())],
+        db_index=True,
+    )
+    params = JSONField()
+    address = models.GenericIPAddressField(null=True)
+    user_agent = models.CharField(max_length=200, default="")
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    objects = AuditLogManager.from_queryset(AuditLogQuerySet)()
+
+    class Meta:
+        verbose_name = "Audit log entry"
+        verbose_name_plural = "Audit log entries"
+
+    def __str__(self):
+        return f"{self.activity} for {self.user.username} from {self.address}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.should_notify():
+            email = self.user.email
+            transaction.on_commit(lambda: notify_auditlog.delay(self.pk, email))
+
+    def get_params(self):
+        from weblate.accounts.templatetags.authnames import get_auth_name
+
+        result = {
+            "site_title": settings.SITE_TITLE,
+        }
+        result.update(self.params)
+        if "method" in result:
+            # The gettext is here for legacy entries which contained method name
+            result["method"] = gettext(get_auth_name(result["method"]))
+        return result
+
+    @admin.display(description=_("Account activity"))
+    def get_message(self):
+        method = self.params.get("method")
+        activity = self.activity
+        if activity in ACCOUNT_ACTIVITY_METHOD.get(method, {}):
+            message = ACCOUNT_ACTIVITY_METHOD[method][activity]
+        else:
+            message = ACCOUNT_ACTIVITY[activity]
+        return message.format(**self.get_params())
+
+    def get_extra_message(self):
+        if self.activity in EXTRA_MESSAGES:
+            return EXTRA_MESSAGES[self.activity].format(**self.params)
+        return None
+
+    def should_notify(self):
+        return (
+            self.user is not None
+            and not self.user.is_bot
+            and self.user.is_active
+            and self.user.email
+            and self.activity in NOTIFY_ACTIVITY
         )
 
-    def subscribed_new_string(self, project, language):
-        return self.filter(
-            subscribe_new_string=True,
-            subscriptions=project,
-            languages=language
-        )
+    def check_rate_limit(self, request):
+        """Check whether the activity should be rate limited."""
+        if self.activity == "failed-auth" and self.user.has_usable_password():
+            failures = AuditLog.objects.get_after(self.user, "login", "failed-auth")
+            if failures.count() >= settings.AUTH_LOCK_ATTEMPTS:
+                self.user.set_unusable_password()
+                self.user.save(update_fields=["password"])
+                AuditLog.objects.create(self.user, request, "locked")
+                return True
 
-    def subscribed_new_suggestion(self, project, language, user):
-        ret = self.filter(
-            subscribe_new_suggestion=True,
-            subscriptions=project,
-            languages=language
-        )
-        # We don't want to filter out anonymous user
-        if user is not None and user.is_authenticated():
-            ret = ret.exclude(user=user)
-        return ret
+        elif self.activity == "reset-request":
+            failures = AuditLog.objects.filter(
+                user=self.user,
+                timestamp__gte=timezone.now() - datetime.timedelta(days=1),
+                activity="reset-request",
+            )
+            if failures.count() >= settings.AUTH_LOCK_ATTEMPTS:
+                return True
 
-    def subscribed_new_contributor(self, project, language, user):
-        return self.filter(
-            subscribe_new_contributor=True,
-            subscriptions=project,
-            languages=language
-        ).exclude(
-            user=user
-        )
-
-    def subscribed_new_comment(self, project, language, user):
-        ret = self.filter(
-            subscribe_new_comment=True,
-            subscriptions=project
-        ).exclude(
-            user=user
-        )
-        # Source comments go to every subscriber
-        if language is not None:
-            ret = ret.filter(languages=language)
-        return ret
-
-    def subscribed_merge_failure(self, project):
-        return self.filter(subscribe_merge_failure=True, subscriptions=project)
+        return False
 
 
-@python_2_unicode_compatible
+class VerifiedEmail(models.Model):
+    """Storage for verified e-mails from auth backends."""
+
+    is_deliverable = models.BooleanField(default=True)
+    social = models.ForeignKey(UserSocialAuth, on_delete=models.deletion.CASCADE)
+    email = EmailField()
+
+    class Meta:
+        verbose_name = "Verified e-mail"
+        verbose_name_plural = "Verified e-mails"
+
+    def __str__(self):
+        return f"{self.social.user.username} - {self.email}"
+
+    @property
+    def provider(self):
+        return self.social.provider
+
+
 class Profile(models.Model):
-    '''
-    User profiles storage.
-    '''
-    user = models.OneToOneField(User, unique=True, editable=False)
+    """User profiles storage."""
+
+    user = models.OneToOneField(
+        User, unique=True, editable=False, on_delete=models.deletion.CASCADE
+    )
     language = models.CharField(
-        verbose_name=_('Interface Language'),
+        verbose_name=_("Interface Language"),
         max_length=10,
-        choices=settings.LANGUAGES
+        choices=settings.LANGUAGES,
     )
     languages = models.ManyToManyField(
         Language,
-        verbose_name=_('Translated languages'),
+        verbose_name=_("Translated languages"),
         blank=True,
-        help_text=_('Choose languages to which you can translate.')
+        help_text=_(
+            "Choose the languages you can translate to. "
+            "These will be offered to you on the dashboard "
+            "for easier access to your chosen translations."
+        ),
     )
     secondary_languages = models.ManyToManyField(
         Language,
-        verbose_name=_('Secondary languages'),
+        verbose_name=_("Secondary languages"),
         help_text=_(
-            'Choose languages you can understand, strings in those languages '
-            'will be shown in addition to the source string.'
+            "Choose languages you can understand, strings in those languages "
+            "will be shown in addition to the source string."
         ),
-        related_name='secondary_profile_set',
+        related_name="secondary_profile_set",
         blank=True,
     )
     suggested = models.IntegerField(default=0, db_index=True)
     translated = models.IntegerField(default=0, db_index=True)
+    uploaded = models.IntegerField(default=0, db_index=True)
+    commented = models.IntegerField(default=0, db_index=True)
 
     hide_completed = models.BooleanField(
-        verbose_name=_('Hide completed translations on dashboard'),
-        default=False
+        verbose_name=_("Hide completed translations on the dashboard"), default=False
     )
     secondary_in_zen = models.BooleanField(
-        verbose_name=_('Show secondary translations in zen mode'),
-        default=True
+        verbose_name=_("Show secondary translations in the Zen mode"), default=True
     )
     hide_source_secondary = models.BooleanField(
-        verbose_name=_('Hide source if there is secondary language'),
-        default=False
+        verbose_name=_("Hide source if a secondary translation exists"), default=False
+    )
+    editor_link = models.CharField(
+        default="",
+        blank=True,
+        max_length=200,
+        verbose_name=_("Editor link"),
+        help_text=_(
+            "Enter a custom URL to be used as link to the source code. "
+            "You can use {{branch}} for branch, "
+            "{{filename}} and {{line}} as filename and line placeholders."
+        ),
+        validators=[validate_editor],
+    )
+    TRANSLATE_FULL = 0
+    TRANSLATE_ZEN = 1
+    translate_mode = models.IntegerField(
+        verbose_name=_("Translation editor mode"),
+        choices=((TRANSLATE_FULL, _("Full editor")), (TRANSLATE_ZEN, _("Zen mode"))),
+        default=TRANSLATE_FULL,
+    )
+    ZEN_VERTICAL = 0
+    ZEN_HORIZONTAL = 1
+    zen_mode = models.IntegerField(
+        verbose_name=_("Zen editor mode"),
+        choices=(
+            (ZEN_VERTICAL, _("Top to bottom")),
+            (ZEN_HORIZONTAL, _("Side by side")),
+        ),
+        default=ZEN_VERTICAL,
+    )
+    special_chars = models.CharField(
+        default="",
+        blank=True,
+        max_length=30,
+        verbose_name=_("Special characters"),
+        help_text=_(
+            "You can specify additional special visual keyboard characters "
+            "to be shown while translating. It can be useful for "
+            "characters you use frequently, but are hard to type on your keyboard."
+        ),
+    )
+    nearby_strings = models.SmallIntegerField(
+        verbose_name=_("Number of nearby strings"),
+        default=settings.NEARBY_MESSAGES,
+        validators=[MinValueValidator(1), MaxValueValidator(50)],
+        help_text=_(
+            "Number of nearby strings to show in each direction in the full editor."
+        ),
+    )
+    auto_watch = models.BooleanField(
+        verbose_name=_("Automatically watch projects on contribution"),
+        default=settings.DEFAULT_AUTO_WATCH,
+        help_text=_(
+            "Whenever you translate a string in a project, you will start watching it."
+        ),
     )
 
-    DASHBOARD_SUBSCRIPTIONS = 1
-    DASHBOARD_LANGUAGES = 2
-    DASHBOARD_ALL = 3
+    DASHBOARD_WATCHED = 1
     DASHBOARD_COMPONENT_LIST = 4
+    DASHBOARD_SUGGESTIONS = 5
+    DASHBOARD_COMPONENT_LISTS = 6
 
     DASHBOARD_CHOICES = (
-        (DASHBOARD_SUBSCRIPTIONS, _('Your subscriptions')),
-        (DASHBOARD_LANGUAGES, _('Your languages')),
-        (DASHBOARD_ALL, _('All projects')),
-        (DASHBOARD_COMPONENT_LIST, _('Component list')),
+        (DASHBOARD_WATCHED, _("Watched translations")),
+        (DASHBOARD_COMPONENT_LISTS, _("Component lists")),
+        (DASHBOARD_COMPONENT_LIST, _("Component list")),
+        (DASHBOARD_SUGGESTIONS, _("Suggested translations")),
     )
 
     DASHBOARD_SLUGS = {
-        DASHBOARD_SUBSCRIPTIONS: 'your-subscriptions',
-        DASHBOARD_LANGUAGES: 'your-languages',
-        DASHBOARD_ALL: 'projects',
-        DASHBOARD_COMPONENT_LIST: 'list',
-    }
-
-    DASHBOARD_SLUGMAP = {
-        d[1]: d[0] for d in DASHBOARD_SLUGS.items()
+        DASHBOARD_WATCHED: "your-subscriptions",
+        DASHBOARD_COMPONENT_LIST: "list",
+        DASHBOARD_SUGGESTIONS: "suggestions",
+        DASHBOARD_COMPONENT_LISTS: "componentlists",
     }
 
     dashboard_view = models.IntegerField(
         choices=DASHBOARD_CHOICES,
-        verbose_name=_('Default dashboard view'),
-        default=DASHBOARD_SUBSCRIPTIONS,
+        verbose_name=_("Default dashboard view"),
+        default=DASHBOARD_WATCHED,
     )
 
     dashboard_component_list = models.ForeignKey(
-        'trans.ComponentList',
-        verbose_name=_('Default component list'),
+        "trans.ComponentList",
+        verbose_name=_("Default component list"),
+        on_delete=models.deletion.SET_NULL,
         blank=True,
         null=True,
     )
 
-    subscriptions = models.ManyToManyField(
-        'trans.Project',
-        verbose_name=_('Subscribed projects'),
+    watched = models.ManyToManyField(
+        "trans.Project",
+        verbose_name=_("Watched projects"),
         help_text=_(
-            'You can receive notifications for subscribed projects and '
-            'they are shown on dashboard by default.'
+            "You can receive notifications for watched projects and "
+            "they are shown on the dashboard by default."
         ),
         blank=True,
     )
 
-    subscribe_any_translation = models.BooleanField(
-        verbose_name=_('Notification on any translation'),
-        default=False
+    # Public profile fields
+    website = models.URLField(
+        verbose_name=_("Website URL"),
+        blank=True,
     )
-    subscribe_new_string = models.BooleanField(
-        verbose_name=_('Notification on new string to translate'),
-        default=False
+    liberapay = models.SlugField(
+        verbose_name=_("Liberapay username"),
+        blank=True,
+        help_text=_(
+            "Liberapay is a platform to donate money to teams, "
+            "organizations and individuals."
+        ),
+        db_index=False,
     )
-    subscribe_new_suggestion = models.BooleanField(
-        verbose_name=_('Notification on new suggestion'),
-        default=False
+    fediverse = models.URLField(
+        verbose_name=_("Fediverse URL"),
+        blank=True,
+        help_text=_(
+            "Link to your Fediverse profile for federated services "
+            "like Mastodon or diaspora*."
+        ),
     )
-    subscribe_new_contributor = models.BooleanField(
-        verbose_name=_('Notification on new contributor'),
-        default=False
+    codesite = models.URLField(
+        verbose_name=_("Code site URL"),
+        blank=True,
+        help_text=_("Link to your code profile for services like Codeberg or GitLab."),
     )
-    subscribe_new_comment = models.BooleanField(
-        verbose_name=_('Notification on new comment'),
-        default=False
+    github = models.SlugField(
+        verbose_name=_("GitHub username"),
+        blank=True,
+        db_index=False,
     )
-    subscribe_merge_failure = models.BooleanField(
-        verbose_name=_('Notification on merge failure'),
-        default=False
+    twitter = models.SlugField(
+        verbose_name=_("Twitter username"),
+        blank=True,
+        db_index=False,
     )
-    subscribe_new_language = models.BooleanField(
-        verbose_name=_('Notification on new language request'),
-        default=False
+    linkedin = models.SlugField(
+        verbose_name=_("LinkedIn profile name"),
+        help_text=_("Your LinkedIn profile name from linkedin.com/in/profilename"),
+        blank=True,
+        db_index=False,
+        allow_unicode=True,
+    )
+    location = models.CharField(
+        verbose_name=_("Location"),
+        max_length=100,
+        blank=True,
+    )
+    company = models.CharField(
+        verbose_name=_("Company"),
+        max_length=100,
+        blank=True,
+    )
+    public_email = EmailField(
+        verbose_name=_("Public e-mail"),
+        blank=True,
+        max_length=EMAIL_LENGTH,
     )
 
-    SUBSCRIPTION_FIELDS = (
-        'subscribe_any_translation',
-        'subscribe_new_string',
-        'subscribe_new_suggestion',
-        'subscribe_new_contributor',
-        'subscribe_new_comment',
-        'subscribe_merge_failure',
-        'subscribe_new_language',
+    commit_email = EmailField(
+        verbose_name=_("Commit e-mail"),
+        blank=True,
+        max_length=EMAIL_LENGTH,
     )
 
-    objects = ProfileManager()
+    class Meta:
+        verbose_name = "User profile"
+        verbose_name_plural = "User profiles"
 
     def __str__(self):
         return self.user.username
+
+    def get_absolute_url(self):
+        return self.user.get_absolute_url()
 
     def get_user_display(self):
         return get_user_display(self.user)
@@ -642,394 +586,255 @@ class Profile(models.Model):
     def get_user_name(self):
         return get_user_display(self.user, False)
 
-    @models.permalink
-    def get_absolute_url(self):
-        return ('user_page', (), {
-            'user': self.user.username
-        })
+    def increase_count(self, item: str, increase: int = 1):
+        """Updates user actions counter."""
+        # Update our copy
+        setattr(self, item, getattr(self, item) + increase)
+        # Update database
+        update = {item: F(item) + increase}
+        Profile.objects.filter(pk=self.pk).update(**update)
 
-    @property
-    def last_change(self):
-        '''
-        Returns date of last change user has done in Weblate.
-        '''
-        try:
-            return self.user.change_set.values_list(
-                'timestamp', flat=True
-            )[0]
-        except IndexError:
-            return None
-
-    def notify_user(self, notification, translation_obj,
-                    context=None, headers=None, user=None):
-        '''
-        Wrapper for sending notifications to user.
-        '''
-        if context is None:
-            context = {}
-        if headers is None:
-            headers = {}
-
-        # Check whether user is still allowed to access this project
-        if not translation_obj.has_acl(self.user):
-            return
-        # Generate notification
-        return get_notification_email(
-            self.language,
-            self.user.email,
-            notification,
-            translation_obj,
-            context,
-            headers,
-            user=user
-        )
-
-    def notify_any_translation(self, unit, oldunit):
-        '''
-        Sends notification on translation.
-        '''
-        if oldunit.translated:
-            template = 'changed_translation'
-        else:
-            template = 'new_translation'
-        return self.notify_user(
-            template,
-            unit.translation,
-            {
-                'unit': unit,
-                'oldunit': oldunit,
-            }
-        )
-
-    def notify_new_language(self, subproject, language, user):
-        '''
-        Sends notification on new language request.
-        '''
-        return self.notify_user(
-            'new_language',
-            subproject,
-            {
-                'language': language,
-                'user': user,
-            },
-            user=user
-        )
-
-    def notify_new_string(self, translation):
-        '''
-        Sends notification on new strings to translate.
-        '''
-        return self.notify_user(
-            'new_string',
-            translation,
-        )
-
-    def notify_new_suggestion(self, translation, suggestion, unit):
-        '''
-        Sends notification on new suggestion.
-        '''
-        return self.notify_user(
-            'new_suggestion',
-            translation,
-            {
-                'suggestion': suggestion,
-                'unit': unit,
-            }
-        )
-
-    def notify_new_contributor(self, translation, user):
-        '''
-        Sends notification on new contributor.
-        '''
-        return self.notify_user(
-            'new_contributor',
-            translation,
-            {
-                'user': user,
-            }
-        )
-
-    def notify_new_comment(self, unit, comment, user):
-        '''
-        Sends notification about new comment.
-        '''
-        return self.notify_user(
-            'new_comment',
-            unit.translation,
-            {
-                'unit': unit,
-                'comment': comment,
-                'subproject': unit.translation.subproject,
-            },
-            user=user,
-        )
-
-    def notify_merge_failure(self, subproject, error, status):
-        '''
-        Sends notification on merge failure.
-        '''
-        return self.notify_user(
-            'merge_failure',
-            subproject,
-            {
-                'subproject': subproject,
-                'error': error,
-                'status': status,
-            }
-        )
-
-    def notify_parse_error(self, subproject, translation, error):
-        '''
-        Sends notification on parse error.
-        '''
-        return self.notify_user(
-            'parse_error',
-            subproject,
-            {
-                'subproject': subproject,
-                'translation': translation,
-                'error': error,
-            }
-        )
+    @cached_property
+    def all_languages(self):
+        return self.languages.all()
 
     @property
     def full_name(self):
-        '''
-        Returns user's full name.
-        '''
-        return self.user.first_name
+        """Return user's full name."""
+        return self.user.full_name
+
+    def clean(self):
+        """Check if component list is chosen when required."""
+        # There is matching logic in ProfileBaseForm.add_error to ignore this
+        # validation on partial forms
+        if (
+            self.dashboard_view == Profile.DASHBOARD_COMPONENT_LIST
+            and self.dashboard_component_list is None
+        ):
+            message = _(
+                "Please choose which component list you want to display on "
+                "the dashboard."
+            )
+            raise ValidationError(
+                {"dashboard_component_list": message, "dashboard_view": message}
+            )
+        if (
+            self.dashboard_view != Profile.DASHBOARD_COMPONENT_LIST
+            and self.dashboard_component_list is not None
+        ):
+            message = _(
+                "Selecting component list has no effect when not shown on "
+                "the dashboard."
+            )
+            raise ValidationError(
+                {"dashboard_component_list": message, "dashboard_view": message}
+            )
+
+    def dump_data(self):
+        def map_attr(attr):
+            if attr.endswith("_id"):
+                return attr[:-3]
+            return attr
+
+        def dump_object(obj, *attrs):
+            return {map_attr(attr): getattr(obj, attr) for attr in attrs}
+
+        result = {
+            "basic": dump_object(
+                self.user, "username", "full_name", "email", "date_joined"
+            ),
+            "profile": dump_object(
+                self,
+                "language",
+                "suggested",
+                "translated",
+                "uploaded",
+                "hide_completed",
+                "secondary_in_zen",
+                "hide_source_secondary",
+                "editor_link",
+                "translate_mode",
+                "zen_mode",
+                "special_chars",
+                "dashboard_view",
+                "dashboard_component_list_id",
+            ),
+            "auditlog": [
+                dump_object(log, "address", "user_agent", "timestamp", "activity")
+                for log in self.user.auditlog_set.iterator()
+            ],
+        }
+        result["profile"]["languages"] = [
+            lang.code for lang in self.languages.iterator()
+        ]
+        result["profile"]["secondary_languages"] = [
+            lang.code for lang in self.secondary_languages.iterator()
+        ]
+        result["profile"]["watched"] = [
+            project.slug for project in self.watched.iterator()
+        ]
+        return result
+
+    @cached_property
+    def primary_language_ids(self) -> Set[int]:
+        return {language.pk for language in self.all_languages}
+
+    @cached_property
+    def allowed_dashboard_component_lists(self):
+        return ComponentList.objects.filter(
+            show_dashboard=True,
+            components__project__in=self.user.allowed_projects,
+        ).distinct()
+
+    @cached_property
+    def secondary_language_ids(self) -> Set[int]:
+        return set(self.secondary_languages.values_list("pk", flat=True))
+
+    def get_translation_order(self, translation) -> int:
+        """Returns key suitable for ordering languages based on user preferences."""
+        language = translation.language
+        if language.pk in self.primary_language_ids:
+            return 0
+        if language.pk in self.secondary_language_ids:
+            return 1
+        if translation.is_source:
+            return 2
+        return 3
+
+    def fixup_profile(self, request):
+        fields = set()
+        if not self.language:
+            self.language = get_language()
+            fields.add("language")
+
+        allowed = {clist.pk for clist in self.allowed_dashboard_component_lists}
+
+        if not allowed and self.dashboard_view in (
+            Profile.DASHBOARD_COMPONENT_LIST,
+            Profile.DASHBOARD_COMPONENT_LISTS,
+        ):
+            self.dashboard_view = Profile.DASHBOARD_WATCHED
+            fields.add("dashboard_view")
+
+        if self.dashboard_component_list_id and (
+            self.dashboard_component_list_id not in allowed
+            or self.dashboard_view != Profile.DASHBOARD_COMPONENT_LIST
+        ):
+            self.dashboard_component_list = None
+            self.dashboard_view = Profile.DASHBOARD_WATCHED
+            fields.add("dashboard_view")
+            fields.add("dashboard_component_list")
+
+        if (
+            not self.dashboard_component_list_id
+            and self.dashboard_view == Profile.DASHBOARD_COMPONENT_LIST
+        ):
+            self.dashboard_view = Profile.DASHBOARD_WATCHED
+            fields.add("dashboard_view")
+
+        if not self.languages.exists():
+            language = Language.objects.get_request_language(request)
+            if language:
+                self.languages.add(language)
+                messages.info(
+                    request,
+                    _(
+                        "Added %(language)s to your translated languages. "
+                        "You can adjust them in the settings."
+                    )
+                    % {"language": language},
+                )
+
+        if fields:
+            self.save(update_fields=fields)
+
+    def get_commit_email(self) -> str:
+        email = self.commit_email
+        if not email and not settings.PRIVATE_COMMIT_EMAIL_OPT_IN:
+            email = self.get_site_commit_email()
+        if not email:
+            email = self.user.email
+        return email
+
+    def get_site_commit_email(self) -> str:
+        if not settings.PRIVATE_COMMIT_EMAIL_TEMPLATE:
+            return ""
+        return settings.PRIVATE_COMMIT_EMAIL_TEMPLATE.format(
+            username=self.user.username,
+            site_domain=settings.SITE_DOMAIN,
+        )
 
 
-@python_2_unicode_compatible
-class AutoGroup(models.Model):
-    match = RegexField(
-        verbose_name=_('Email regular expression'),
-        max_length=200,
-        default='^.*$',
-        help_text=_(
-            'Regular expression which is used to match user email.'
-        ),
-    )
-    group = models.ForeignKey(
-        Group,
-        verbose_name=_('Group to assign'),
-    )
-
-    class Meta(object):
-        verbose_name = _('Automatic group assignment')
-        verbose_name_plural = _('Automatic group assignments')
-        ordering = ('group__name', )
-
-    def __str__(self):
-        return 'Automatic rule for {0}'.format(self.group)
-
-
-def set_lang(request, profile):
-    """
-    Sets session language based on user preferences.
-    """
-    request.session[LANGUAGE_SESSION_KEY] = profile.language
+def set_lang_cookie(response, profile):
+    """Set session language based on user preferences."""
+    if profile.language:
+        response.set_cookie(
+            settings.LANGUAGE_COOKIE_NAME,
+            profile.language,
+            max_age=settings.LANGUAGE_COOKIE_AGE,
+            path=settings.LANGUAGE_COOKIE_PATH,
+            domain=settings.LANGUAGE_COOKIE_DOMAIN,
+            secure=settings.LANGUAGE_COOKIE_SECURE,
+            httponly=settings.LANGUAGE_COOKIE_HTTPONLY,
+            samesite=settings.LANGUAGE_COOKIE_SAMESITE,
+        )
 
 
 @receiver(user_logged_in)
 def post_login_handler(sender, request, user, **kwargs):
-    '''
-    Signal handler for setting user language and
-    migrating profile if needed.
-    '''
+    """
+    Signal handler for post login.
+
+    It sets user language and migrates profile if needed.
+    """
+    backend_name = getattr(user, "backend", "")
+    is_email_auth = backend_name.endswith((".EmailAuth", ".WeblateUserBackend"))
 
     # Warning about setting password
-    if (getattr(user, 'backend', '').endswith('.EmailAuth') and
-            not user.has_usable_password()):
-        request.session['show_set_password'] = True
-
-    # Ensure user has a profile
-    profile = Profile.objects.get_or_create(user=user)[0]
+    if is_email_auth and not user.has_usable_password():
+        request.session["show_set_password"] = True
 
     # Migrate django-registration based verification to python-social-auth
-    if (user.has_usable_password() and
-            not user.social_auth.filter(provider='email').exists()):
-        social = user.social_auth.create(
-            provider='email',
-            uid=user.email,
-        )
-        VerifiedEmail.objects.create(
-            social=social,
-            email=user.email,
-        )
+    # and handle external authentication such as LDAP
+    if (
+        is_email_auth
+        and user.has_usable_password()
+        and user.email
+        and not user.social_auth.filter(provider="email").exists()
+    ):
+        social = user.social_auth.create(provider="email", uid=user.email)
+        VerifiedEmail.objects.create(social=social, email=user.email)
 
-    # Set language for session based on preferences
-    set_lang(request, profile)
+    # Fixup accounts with empty name
+    if not user.full_name:
+        user.full_name = user.username
+        user.save(update_fields=["full_name"])
 
-
-@receiver(user_logged_out)
-def post_logout_handler(sender, request, user, **kwargs):
-    # Unlock translations on logout
-    for translation in user.translation_set.all():
-        translation.create_lock(None)
-
-
-def create_groups(update):
-    '''
-    Creates standard groups and gives them permissions.
-    '''
-    guest_group, created = Group.objects.get_or_create(name='Guests')
-    if created or update:
-        guest_group.permissions.add(
-            Permission.objects.get(codename='can_see_git_repository'),
-            Permission.objects.get(codename='add_suggestion'),
+    # Warn about not set e-mail
+    if not user.email:
+        messages.error(
+            request,
+            _(
+                "You can not submit translations as "
+                "you do not have assigned any e-mail address."
+            ),
         )
 
-    group, created = Group.objects.get_or_create(name='Users')
-    if created or update:
-        group.permissions.add(
-            Permission.objects.get(codename='upload_translation'),
-            Permission.objects.get(codename='overwrite_translation'),
-            Permission.objects.get(codename='save_translation'),
-            Permission.objects.get(codename='save_template'),
-            Permission.objects.get(codename='accept_suggestion'),
-            Permission.objects.get(codename='delete_suggestion'),
-            Permission.objects.get(codename='vote_suggestion'),
-            Permission.objects.get(codename='ignore_check'),
-            Permission.objects.get(codename='upload_dictionary'),
-            Permission.objects.get(codename='add_dictionary'),
-            Permission.objects.get(codename='change_dictionary'),
-            Permission.objects.get(codename='delete_dictionary'),
-            Permission.objects.get(codename='lock_translation'),
-            Permission.objects.get(codename='can_see_git_repository'),
-            Permission.objects.get(codename='add_comment'),
-            Permission.objects.get(codename='add_suggestion'),
-            Permission.objects.get(codename='use_mt'),
-        )
-
-    if not AutoGroup.objects.filter(group=group).exists():
-        AutoGroup.objects.create(group=group, match='^.*$')
-
-    owner_permissions = (
-        Permission.objects.get(codename='author_translation'),
-        Permission.objects.get(codename='upload_translation'),
-        Permission.objects.get(codename='overwrite_translation'),
-        Permission.objects.get(codename='commit_translation'),
-        Permission.objects.get(codename='update_translation'),
-        Permission.objects.get(codename='push_translation'),
-        Permission.objects.get(codename='automatic_translation'),
-        Permission.objects.get(codename='save_translation'),
-        Permission.objects.get(codename='save_template'),
-        Permission.objects.get(codename='accept_suggestion'),
-        Permission.objects.get(codename='vote_suggestion'),
-        Permission.objects.get(codename='override_suggestion'),
-        Permission.objects.get(codename='delete_comment'),
-        Permission.objects.get(codename='delete_suggestion'),
-        Permission.objects.get(codename='ignore_check'),
-        Permission.objects.get(codename='upload_dictionary'),
-        Permission.objects.get(codename='add_dictionary'),
-        Permission.objects.get(codename='change_dictionary'),
-        Permission.objects.get(codename='delete_dictionary'),
-        Permission.objects.get(codename='lock_subproject'),
-        Permission.objects.get(codename='reset_translation'),
-        Permission.objects.get(codename='lock_translation'),
-        Permission.objects.get(codename='can_see_git_repository'),
-        Permission.objects.get(codename='add_comment'),
-        Permission.objects.get(codename='delete_comment'),
-        Permission.objects.get(codename='add_suggestion'),
-        Permission.objects.get(codename='use_mt'),
-        Permission.objects.get(codename='edit_priority'),
-        Permission.objects.get(codename='edit_flags'),
-        Permission.objects.get(codename='manage_acl'),
-        Permission.objects.get(codename='download_changes'),
-        Permission.objects.get(codename='view_reports'),
-    )
-
-    group, created = Group.objects.get_or_create(name='Managers')
-    if created or update:
-        group.permissions.add(*owner_permissions)
-
-    group, created = Group.objects.get_or_create(name='Owners')
-    if created or update:
-        group.permissions.add(*owner_permissions)
-
-    created = True
-    try:
-        anon_user = User.objects.get(
-            username=ANONYMOUS_USER_NAME,
-        )
-        created = False
-        if anon_user.is_active:
-            raise ValueError(
-                'Anonymous user ({}) already exists and enabled, '
-                'please change ANONYMOUS_USER_NAME setting.'.format(
-                    ANONYMOUS_USER_NAME,
-                )
-            )
-    except User.DoesNotExist:
-        anon_user = User.objects.create(
-            username=ANONYMOUS_USER_NAME,
-            is_active=False,
-        )
-    # Ensure anonymous user has profile
-    Profile.objects.get_or_create(user=anon_user)
-
-    if created or update:
-        anon_user.set_unusable_password()
-        anon_user.groups.clear()
-        anon_user.groups.add(guest_group)
-
-
-def move_users():
-    '''
-    Moves users to default group.
-    '''
-    group = Group.objects.get(name='Users')
-
-    for user in User.objects.all():
-        user.groups.add(group)
-
-
-def remove_user(user):
-    '''
-    Removes user account.
-    '''
-    # Send signal (to commit any pending changes)
-    user_pre_delete.send(instance=user, sender=user.__class__)
-
-    # Change username
-    user.username = 'deleted-{0}'.format(user.pk)
-    while User.objects.filter(username=user.username).exists():
-        user.username = 'deleted-{0}-{1}'.format(
-            user.pk,
-            binascii.b2a_hex(os.urandom(5))
-        )
-
-    # Remove user information
-    user.first_name = 'Deleted User'
-    user.last_name = ''
-    user.email = 'noreply@weblate.org'
-
-    # Disable the user
-    user.is_active = False
-    user.set_unusable_password()
-    user.save()
-
-    # Remove all social auth associations
-    user.social_auth.all().delete()
-
-
-@receiver(post_migrate)
-def sync_create_groups(sender, **kwargs):
-    '''
-    Create groups on syncdb.
-    '''
-    if sender.label == 'accounts':
-        create_groups(False)
+    # Sanitize profile
+    user.profile.fixup_profile(request)
 
 
 @receiver(post_save, sender=User)
+@disable_for_loaddata
 def create_profile_callback(sender, instance, created=False, **kwargs):
-    '''
-    Automatically adds user to Users group.
-    '''
+    """Automatically create token and profile for user."""
     if created:
-        # Add user to automatic groups
-        for auto in AutoGroup.objects.all():
-            if re.match(auto.match, instance.email):
-                instance.groups.add(auto.group)
+        # Create API token
+        instance.auth_token = Token.objects.create(
+            user=instance, key=get_token("wlp" if instance.is_bot else "wlu")
+        )
+        # Create profile
+        instance.profile = Profile.objects.create(user=instance)
+        # Create subscriptions
+        if not instance.is_anonymous:
+            create_default_notifications(instance)

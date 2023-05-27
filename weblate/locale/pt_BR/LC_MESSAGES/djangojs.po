@@ -1,15 +1,18 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the PACKAGE package.
-# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
-#
+# Rafael Fontenelle <rafaelff@gnome.org>, 2019, 2020, 2021, 2022.
+# Anonymous <noreply@weblate.org>, 2020.
+# José Elias Júnior <jose.elias.0703@gmail.com>, 2020.
+# William Weber Berrutti <wwberrutti@protonmail.ch>, 2021.
+# Felipe <felipefplzx@gmail.com>, 2021.
 msgid ""
 msgstr ""
-"Project-Id-Version: Weblate 1.2\n"
-"Report-Msgid-Bugs-To: weblate@lists.cihar.com\n"
-"POT-Creation-Date: 2016-03-10 08:51+0000\n"
-"PO-Revision-Date: 2016-01-26 14:39+0000\n"
-"Last-Translator: Luiz Fernando Ranghetti <elchevive@opensuse.org>\n"
+"Project-Id-Version: Weblate 4.17\n"
+"Report-Msgid-Bugs-To: https://github.com/WeblateOrg/weblate/issues\n"
+"POT-Creation-Date: 2023-04-14 14:37+0000\n"
+"PO-Revision-Date: 2023-02-28 08:40+0000\n"
+"Last-Translator: Anonymous <noreply@weblate.org>\n"
 "Language-Team: Portuguese (Brazil) <https://hosted.weblate.org/projects/"
 "weblate/javascript/pt_BR/>\n"
 "Language: pt_BR\n"
@@ -17,268 +20,427 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
-"X-Generator: Weblate 2.5-dev\n"
+"X-Generator: Weblate 4.16-dev\n"
 
-#: weblate/static/loader-bootstrap.js:195
-msgid "Copy"
-msgstr "Copiar"
+#: weblate/static/editor/base.js:94
+msgid "Please select target plural by clicking."
+msgstr "Por favor selecione o alvo do plural clicando."
 
-#: weblate/static/loader-bootstrap.js:200
-msgid "Copy and save"
-msgstr "Copiar e salvar"
-
-#: weblate/static/loader-bootstrap.js:242
+#: weblate/static/editor/base.js:174
 #, javascript-format
-msgid "Alt+M then %s"
-msgstr "Alt+M e então %s"
+msgid "Cmd+%s"
+msgstr "Cmd+%s"
 
-#: weblate/static/loader-bootstrap.js:261
+#: weblate/static/editor/base.js:176
+#, javascript-format
+msgid "Ctrl+%s"
+msgstr "Ctrl+%s"
+
+#: weblate/static/editor/full.js:261
+msgid "Translation memory entry removed."
+msgstr "Entrada de memória de tradução removida."
+
+#: weblate/static/editor/full.js:294
+msgid "The request for machine translation has failed:"
+msgstr "A requisição pra tradução da máquina falhou:"
+
+#: weblate/static/editor/full.js:307
 #, javascript-format
 msgid "The request for machine translation using %s has failed:"
-msgstr "A requisição para a tradução externa usando %s falhou:"
+msgstr "A requisição pra tradução da máquina usando o %s falhou:"
 
-#: weblate/static/loader-bootstrap.js:273
-msgid "The request for machine translation has failed:"
-msgstr "A requisição para a tradução externa falhou:"
-
-#: weblate/static/loader-bootstrap.js:334
-msgid "Sort this column"
-msgstr "Ordenar esta coluna"
-
-#: weblate/static/loader-bootstrap.js:421
-msgid "Error while loading page:"
-msgstr "Erro durante o carregamento da página:"
-
-#: weblate/static/loader-bootstrap.js:680
+#: weblate/static/editor/full.js:342
 #, javascript-format
-msgid "Alt+%s"
-msgstr "Alt+%s"
+msgid "Cmd+M then %s"
+msgstr "Cmd+M e então %s"
 
-#: weblate/static/loader-bootstrap.js:824
+#: weblate/static/editor/full.js:344
+#, javascript-format
+msgid "Ctrl+M then %s"
+msgstr "Ctrl+M e então %s"
+
+#: weblate/static/editor/full.js:446
+#, javascript-format
+msgid "Press Cmd+I then %s to dismiss this."
+msgstr "Pressione Cmd+I e então %s pra dispensar isto."
+
+#: weblate/static/editor/full.js:451
+#, javascript-format
+msgid "Press Ctrl+I then %s to dismiss this."
+msgstr "Pressione Ctrl+I e então %s pra dispensar isto."
+
+#: weblate/static/editor/full.js:590
+msgid "Clone to translation"
+msgstr "Clona para tradução"
+
+#: weblate/static/editor/full.js:596
+msgid "Accept"
+msgstr "Aceitar"
+
+#: weblate/static/editor/full.js:607
+msgid "Delete entry"
+msgstr "Excluir entrada"
+
+#: weblate/static/editor/zen.js:105
 msgid "There are some unsaved changes, are you sure you want to leave?"
-msgstr "Há alterações não salvas, tem certeza que deseja sair?"
+msgstr "Há algumas mudanças não salvas, você tem certeza que você quer sair?"
 
-#: weblate/static/loader-bootstrap.js:840
-#: weblate/static/loader-bootstrap.js:842
+#: weblate/static/loader-bootstrap.js:171
+msgid "Error loading search results!"
+msgstr "Erro ao carregar os resultados da busca!"
+
+#: weblate/static/loader-bootstrap.js:175
+msgid "No new matching source strings found."
+msgstr "Não foram achadas novas strings da fonte que combinem."
+
+#: weblate/static/loader-bootstrap.js:245
+msgid "Sort this column"
+msgstr "Organizar esta coluna"
+
+#: weblate/static/loader-bootstrap.js:484
+msgid "Error while loading page:"
+msgstr "Erro enquanto carregava a página:"
+
+#: weblate/static/loader-bootstrap.js:645
+#: weblate/static/loader-bootstrap.js:652
 msgid "Sunday"
 msgstr "Domingo"
 
-#: weblate/static/loader-bootstrap.js:840
+#: weblate/static/loader-bootstrap.js:646
 msgid "Monday"
 msgstr "Segunda-feira"
 
-#: weblate/static/loader-bootstrap.js:840
+#: weblate/static/loader-bootstrap.js:647
 msgid "Tuesday"
 msgstr "Terça-feira"
 
-#: weblate/static/loader-bootstrap.js:841
+#: weblate/static/loader-bootstrap.js:648
 msgid "Wednesday"
 msgstr "Quarta-feira"
 
-#: weblate/static/loader-bootstrap.js:841
+#: weblate/static/loader-bootstrap.js:649
 msgid "Thursday"
 msgstr "Quinta-feira"
 
-#: weblate/static/loader-bootstrap.js:841
+#: weblate/static/loader-bootstrap.js:650
 msgid "Friday"
 msgstr "Sexta-feira"
 
-#: weblate/static/loader-bootstrap.js:842
+#: weblate/static/loader-bootstrap.js:651
 msgid "Saturday"
 msgstr "Sábado"
 
-#: weblate/static/loader-bootstrap.js:845
-#: weblate/static/loader-bootstrap.js:852
-msgctxt "Short (eg. three letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:655
+#: weblate/static/loader-bootstrap.js:662
+msgctxt "Short (for example three letter) name of day in week"
 msgid "Sun"
 msgstr "Dom"
 
-#: weblate/static/loader-bootstrap.js:846
-msgctxt "Short (eg. three letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:656
+msgctxt "Short (for example three letter) name of day in week"
 msgid "Mon"
 msgstr "Seg"
 
-#: weblate/static/loader-bootstrap.js:847
-msgctxt "Short (eg. three letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:657
+msgctxt "Short (for example three letter) name of day in week"
 msgid "Tue"
 msgstr "Ter"
 
-#: weblate/static/loader-bootstrap.js:848
-msgctxt "Short (eg. three letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:658
+msgctxt "Short (for example three letter) name of day in week"
 msgid "Wed"
 msgstr "Qua"
 
-#: weblate/static/loader-bootstrap.js:849
-msgctxt "Short (eg. three letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:659
+msgctxt "Short (for example three letter) name of day in week"
 msgid "Thu"
 msgstr "Qui"
 
-#: weblate/static/loader-bootstrap.js:850
-msgctxt "Short (eg. three letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:660
+msgctxt "Short (for example three letter) name of day in week"
 msgid "Fri"
 msgstr "Sex"
 
-#: weblate/static/loader-bootstrap.js:851
-msgctxt "Short (eg. three letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:661
+msgctxt "Short (for example three letter) name of day in week"
 msgid "Sat"
 msgstr "Sáb"
 
-#: weblate/static/loader-bootstrap.js:855
-#: weblate/static/loader-bootstrap.js:862
-msgctxt "Minimal (eg. two letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:665
+#: weblate/static/loader-bootstrap.js:672
+msgctxt "Minimal (for example two letter) name of day in week"
 msgid "Su"
 msgstr "D"
 
-#: weblate/static/loader-bootstrap.js:856
-msgctxt "Minimal (eg. two letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:666
+msgctxt "Minimal (for example two letter) name of day in week"
 msgid "Mo"
 msgstr "S"
 
-#: weblate/static/loader-bootstrap.js:857
-msgctxt "Minimal (eg. two letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:667
+msgctxt "Minimal (for example two letter) name of day in week"
 msgid "Tu"
 msgstr "T"
 
-#: weblate/static/loader-bootstrap.js:858
-msgctxt "Minimal (eg. two letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:668
+msgctxt "Minimal (for example two letter) name of day in week"
 msgid "We"
 msgstr "Q"
 
-#: weblate/static/loader-bootstrap.js:859
-msgctxt "Minimal (eg. two letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:669
+msgctxt "Minimal (for example two letter) name of day in week"
 msgid "Th"
 msgstr "Q"
 
-#: weblate/static/loader-bootstrap.js:860
-msgctxt "Minimal (eg. two letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:670
+msgctxt "Minimal (for example two letter) name of day in week"
 msgid "Fr"
 msgstr "S"
 
-#: weblate/static/loader-bootstrap.js:861
-msgctxt "Minimal (eg. two letter) name of day in week"
+#: weblate/static/loader-bootstrap.js:671
+msgctxt "Minimal (for example two letter) name of day in week"
 msgid "Sa"
 msgstr "S"
 
-#: weblate/static/loader-bootstrap.js:865
+#: weblate/static/loader-bootstrap.js:675
 msgid "January"
 msgstr "Janeiro"
 
-#: weblate/static/loader-bootstrap.js:865
+#: weblate/static/loader-bootstrap.js:676
 msgid "February"
 msgstr "Fevereiro"
 
-#: weblate/static/loader-bootstrap.js:865
+#: weblate/static/loader-bootstrap.js:677
 msgid "March"
 msgstr "Março"
 
-#: weblate/static/loader-bootstrap.js:866
+#: weblate/static/loader-bootstrap.js:678
 msgid "April"
 msgstr "Abril"
 
-#: weblate/static/loader-bootstrap.js:866
+#: weblate/static/loader-bootstrap.js:679
 msgid "May"
 msgstr "Maio"
 
-#: weblate/static/loader-bootstrap.js:866
+#: weblate/static/loader-bootstrap.js:680
 msgid "June"
 msgstr "Junho"
 
-#: weblate/static/loader-bootstrap.js:866
+#: weblate/static/loader-bootstrap.js:681
 msgid "July"
 msgstr "Julho"
 
-#: weblate/static/loader-bootstrap.js:867
+#: weblate/static/loader-bootstrap.js:682
 msgid "August"
 msgstr "Agosto"
 
-#: weblate/static/loader-bootstrap.js:867
+#: weblate/static/loader-bootstrap.js:683
 msgid "September"
 msgstr "Setembro"
 
-#: weblate/static/loader-bootstrap.js:867
+#: weblate/static/loader-bootstrap.js:684
 msgid "October"
 msgstr "Outubro"
 
-#: weblate/static/loader-bootstrap.js:868
+#: weblate/static/loader-bootstrap.js:685
 msgid "November"
 msgstr "Novembro"
 
-#: weblate/static/loader-bootstrap.js:868
+#: weblate/static/loader-bootstrap.js:686
 msgid "December"
 msgstr "Dezembro"
 
-#: weblate/static/loader-bootstrap.js:871
+#: weblate/static/loader-bootstrap.js:689
 msgctxt "Short name of month"
 msgid "Jan"
 msgstr "Jan"
 
-#: weblate/static/loader-bootstrap.js:872
+#: weblate/static/loader-bootstrap.js:690
 msgctxt "Short name of month"
 msgid "Feb"
 msgstr "Fev"
 
-#: weblate/static/loader-bootstrap.js:873
+#: weblate/static/loader-bootstrap.js:691
 msgctxt "Short name of month"
 msgid "Mar"
 msgstr "Mar"
 
-#: weblate/static/loader-bootstrap.js:874
+#: weblate/static/loader-bootstrap.js:692
 msgctxt "Short name of month"
 msgid "Apr"
 msgstr "Abr"
 
-#: weblate/static/loader-bootstrap.js:875
+#: weblate/static/loader-bootstrap.js:693
 msgctxt "Short name of month"
 msgid "May"
 msgstr "Maio"
 
-#: weblate/static/loader-bootstrap.js:876
+#: weblate/static/loader-bootstrap.js:694
 msgctxt "Short name of month"
 msgid "Jun"
 msgstr "Jun"
 
-#: weblate/static/loader-bootstrap.js:877
+#: weblate/static/loader-bootstrap.js:695
 msgctxt "Short name of month"
 msgid "Jul"
 msgstr "Jul"
 
-#: weblate/static/loader-bootstrap.js:878
+#: weblate/static/loader-bootstrap.js:696
 msgctxt "Short name of month"
 msgid "Aug"
 msgstr "Ago"
 
-#: weblate/static/loader-bootstrap.js:879
+#: weblate/static/loader-bootstrap.js:697
 msgctxt "Short name of month"
 msgid "Sep"
 msgstr "Set"
 
-#: weblate/static/loader-bootstrap.js:880
+#: weblate/static/loader-bootstrap.js:698
 msgctxt "Short name of month"
 msgid "Oct"
 msgstr "Out"
 
-#: weblate/static/loader-bootstrap.js:881
+#: weblate/static/loader-bootstrap.js:699
 msgctxt "Short name of month"
 msgid "Nov"
 msgstr "Nov"
 
-#: weblate/static/loader-bootstrap.js:882
+#: weblate/static/loader-bootstrap.js:700
 msgctxt "Short name of month"
 msgid "Dec"
 msgstr "Dez"
 
-#: weblate/static/loader-bootstrap.js:884
+#: weblate/static/loader-bootstrap.js:702
 msgid "Today"
 msgstr "Hoje"
 
-#: weblate/static/loader-bootstrap.js:885
+#: weblate/static/loader-bootstrap.js:703
 msgid "Clear"
 msgstr "Limpar"
 
-#: weblate/static/loader-bootstrap.js:919
+#: weblate/static/loader-bootstrap.js:835
+msgid "Text copied to clipboard."
+msgstr "Texto copiado pra área de transferência."
+
+#: weblate/static/loader-bootstrap.js:839
+msgid "Please press Ctrl+C to copy."
+msgstr "Por favor pressione Ctrl+C pra copiar."
+
+#: weblate/static/loader-bootstrap.js:863
+msgid "Search…"
+msgstr "Procurar…"
+
+#: weblate/static/loader-bootstrap.js:864
+msgid "Available:"
+msgstr "Disponível:"
+
+#: weblate/static/loader-bootstrap.js:865
+msgid "Chosen:"
+msgstr "Escolhido:"
+
+#: weblate/static/loader-bootstrap.js:1130
+msgid "Weblate is now scanning the repository, please be patient."
+msgstr ""
+"O Weblate está agora escaneando o repositório, por favor seja paciente."
+
+#: weblate/static/loader-bootstrap.js:1225
+msgctxt "Alert to user when opening browser developer console"
+msgid "Stop!"
+msgstr "Pare!"
+
+#: weblate/static/loader-bootstrap.js:1231
+msgid ""
+"This is a browser feature intended for developers. If someone told you to "
+"copy-paste something here, they are likely trying to compromise your Weblate "
+"account."
+msgstr ""
+"Este recurso de navegador é destinado a desenvolvedores. Se alguém falou "
+"para você copiar e colar alguma coisa aqui, esta pessoa provavelmente está "
+"tentando comprometer sua conta do Weblate."
+
+#: weblate/static/loader-bootstrap.js:1238
+msgid "See https://en.wikipedia.org/wiki/Self-XSS for more information."
+msgstr "Veja https://en.wikipedia.org/wiki/Self-XSS para mais informações."
+
+#: weblate/static/zammad.js:7
+msgid "Weblate feedback"
+msgstr "Feedback do Weblate"
+
+#: weblate/static/zammad.js:8
+msgid "Get help"
+msgstr "Obter ajuda"
+
+#: weblate/static/zammad.js:10
 #, javascript-format
-msgid "Alt+I then %s"
-msgstr "Alt+I e então %s"
+msgid ""
+"Thank you for your inquiry (#%s)! We'll contact you as soon as possible."
+msgstr ""
+"Obrigado pela sua indagação (#%s)! Nós contactaremos você tão breve quanto "
+"possível."
+
+#: weblate/static/zammad.js:17
+msgid "Subject"
+msgstr "Assunto"
+
+#: weblate/static/zammad.js:25
+msgid "Your name"
+msgstr "Seu nome"
+
+#: weblate/static/zammad.js:33
+msgid "Your e-mail"
+msgstr "Seu e-mail"
+
+#: weblate/static/zammad.js:41
+msgid "Message"
+msgstr "Mensagem"
+
+#: weblate/static/zammad.js:45
+msgid ""
+"Please contact us in English, otherwise we might be unable to process your "
+"request."
+msgstr ""
+"Por favor nos contacte em inglês, caso contrário nós poderíamos ser "
+"incapazes de processar sua requisição."
+
+#: weblate/static/zammad.js:51
+msgid "Attachments"
+msgstr "Anexos"
+
+#~ msgid "Copy"
+#~ msgstr "Copiar"
+
+#~ msgid "Copy and save"
+#~ msgstr "Copiar e salvar"
+
+#~ msgid "Add to screenshot"
+#~ msgstr "Adicionar à captura de tela"
+
+#~ msgid "Ctrl/Command+%s"
+#~ msgstr "Ctrl/Comando+%s"
+
+#~ msgid "Ctrl+I then %s"
+#~ msgstr "Ctrl+I e então %s"
+
+#~ msgid "Copied"
+#~ msgstr "Copiado"
+
+#~ msgid "Selected:"
+#~ msgstr "Selecionado:"
+
+#~ msgid "Alt+%s"
+#~ msgstr "Alt+%s"
+
+#~ msgid "Available %s"
+#~ msgstr "Disponível %s"
+
+#, fuzzy
+#~| msgctxt "Short name of month"
+#~| msgid "Nov"
+#~ msgid "Now"
+#~ msgstr "Nov"
+
+#~ msgid "Cancel"
+#~ msgstr "Cancelar"
 
 #~ msgid "Strings with any failing checks"
 #~ msgstr "Textos com qualquer verificação com falha"
@@ -292,9 +454,6 @@ msgstr "Alt+I e então %s"
 #~ msgid "Ok"
 #~ msgstr "Ok"
 
-#~ msgid "Cancel"
-#~ msgstr "Cancelar"
-
 #~ msgid "AJAX request to load this content has failed!"
 #~ msgstr "A requisição AJAX falhou ao carregar este conteúdo!"
 
@@ -306,9 +465,6 @@ msgstr "Alt+I e então %s"
 
 #~ msgid "Resetting the repository will throw away all local changes!"
 #~ msgstr "Reinicializar o repositório descartará todas as mudanças locais!"
-
-#~ msgid "Failed translation"
-#~ msgstr "A tradução falhou"
 
 #~ msgid "Error details:"
 #~ msgstr "Detalhes do erro:"

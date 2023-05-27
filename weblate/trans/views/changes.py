@@ -1,236 +1,298 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import csv
 
-from django.views.generic.list import ListView
-from django.http import Http404, HttpResponse
-from django.contrib import messages
-from django.contrib.auth.models import User
-from django.utils.translation import ugettext as _, activate
-from django.core.urlresolvers import reverse
-from django.db.models import Q
+from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.http import Http404, HttpResponse
+from django.shortcuts import get_object_or_404
+from django.urls import reverse
+from django.utils.http import urlencode
+from django.utils.translation import activate
+from django.utils.translation import gettext as _
+from django.utils.translation import pgettext
+from django.views.generic.list import ListView
 
-from six.moves.urllib.parse import urlencode
-
-from weblate.trans.models.changes import Change
-from weblate.trans.views.helper import get_project_translation
+from weblate.accounts.notifications import NOTIFICATIONS_ACTIONS
+from weblate.auth.models import User
 from weblate.lang.models import Language
-from weblate.trans.permissions import can_download_changes
+from weblate.trans.forms import ChangesFilterForm, ChangesForm
+from weblate.trans.models.change import Change
+from weblate.utils import messages
+from weblate.utils.site import get_site_url
+from weblate.utils.views import get_project_translation
 
 
 class ChangesView(ListView):
-    '''
-    Browser for changes.
-    '''
+    """Browser for changes."""
+
     paginate_by = 20
 
     def __init__(self, **kwargs):
-        super(ChangesView, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.project = None
-        self.subproject = None
+        self.component = None
         self.translation = None
+        self.unit = None
         self.language = None
         self.user = None
-        self.glossary = False
+        self.actions = set()
+        self.start_date = None
+        self.end_date = None
+        self.changes_form = None
 
     def get_context_data(self, **kwargs):
-        '''
-        Creates context for rendering page.
-        '''
-        context = super(ChangesView, self).get_context_data(
-            **kwargs
-        )
-        context['title'] = _('Changes')
-        context['project'] = self.project
+        """Create context for rendering page."""
+        context = super().get_context_data(**kwargs)
+        context["project"] = self.project
 
         url = {}
 
         if self.translation is not None:
-            url['lang'] = self.translation.language.code
-            url['subproject'] = self.translation.subproject.slug
-            url['project'] = self.translation.subproject.project.slug
-            context['changes_rss'] = reverse(
-                'rss-translation',
-                kwargs=url,
+            context["project"] = self.translation.component.project
+            context["component"] = self.translation.component
+            context["translation"] = self.translation
+            url["lang"] = self.translation.language.code
+            url["component"] = self.translation.component.slug
+            url["project"] = self.translation.component.project.slug
+            context["changes_rss"] = reverse("rss-translation", kwargs=url)
+            context["title"] = (
+                pgettext("Changes in translation", "Changes in %s") % self.translation
             )
-        elif self.subproject is not None:
-            url['subproject'] = self.subproject.slug
-            url['project'] = self.subproject.project.slug
-            context['changes_rss'] = reverse(
-                'rss-subproject',
-                kwargs=url,
+            if self.unit is not None:
+                context["unit"] = self.unit
+                url = {"string": self.unit.pk}
+                context["title"] = (
+                    pgettext(
+                        "Changes of string in a translation", "Changes of string in %s"
+                    )
+                    % self.translation
+                )
+        elif self.component is not None:
+            context["project"] = self.component.project
+            context["component"] = self.component
+            url["component"] = self.component.slug
+            url["project"] = self.component.project.slug
+            context["changes_rss"] = reverse("rss-component", kwargs=url)
+            context["title"] = (
+                pgettext("Changes in component", "Changes in %s") % self.component
             )
         elif self.project is not None:
-            url['project'] = self.project.slug
-            context['changes_rss'] = reverse(
-                'rss-project',
-                kwargs=url,
+            context["project"] = self.project
+            url["project"] = self.project.slug
+            context["changes_rss"] = reverse("rss-project", kwargs=url)
+            context["title"] = (
+                pgettext("Changes in project", "Changes in %s") % self.project
             )
 
         if self.language is not None:
-            url['lang'] = self.language.code
-            if 'changes_rss' not in context:
-                context['changes_rss'] = reverse(
-                    'rss-language',
-                    kwargs=url,
+            context["language"] = self.language
+            url["lang"] = self.language.code
+            if "changes_rss" not in context:
+                context["changes_rss"] = reverse("rss-language", kwargs=url)
+            if "title" not in context:
+                context["title"] = (
+                    pgettext("Changes in language", "Changes in %s") % self.language
                 )
 
         if self.user is not None:
-            url['user'] = self.user.username.encode('utf-8')
+            context["changes_user"] = self.user
+            url["user"] = self.user.username
+            if "title" not in context:
+                context["title"] = (
+                    pgettext("Changes by user", "Changes by %s") % self.user.full_name
+                )
 
-        if self.glossary:
-            url['glossary'] = 1
+        url = list(url.items())
+        for action in self.actions:
+            url.append(("action", action))
 
-        if len(url) == 0:
-            context['changes_rss'] = reverse('rss')
+        if self.start_date:
+            url.append(("start_date", self.start_date.date()))
 
-        context['query_string'] = urlencode(url)
+        if self.end_date:
+            url.append(("end_date", self.end_date.date()))
+
+        if not url:
+            context["changes_rss"] = reverse("rss")
+
+        context["query_string"] = urlencode(url)
+
+        context["form"] = self.changes_form
+
+        context["search_items"] = url
 
         return context
 
-    def _get_queryset_project(self):
-        """
-        Filtering by translation/project.
-        """
-        if 'project' in self.request.GET:
-            try:
-                self.project, self.subproject, self.translation = \
-                    get_project_translation(
-                        self.request,
-                        self.request.GET.get('project', None),
-                        self.request.GET.get('subproject', None),
-                        self.request.GET.get('lang', None),
-                    )
-            except Http404:
-                messages.error(
-                    self.request,
-                    _('Failed to find matching project!')
-                )
+    def _get_queryset_project(self, form):
+        """Filtering by translation/project."""
+        if not form.cleaned_data.get("project"):
+            return
+        try:
+            self.project, self.component, self.translation = get_project_translation(
+                self.request,
+                form.cleaned_data.get("project"),
+                form.cleaned_data.get("component"),
+                form.cleaned_data.get("lang"),
+            )
+        except Http404:
+            messages.error(self.request, _("Failed to find matching project!"))
 
-    def _get_queryset_language(self):
-        """
-        Filtering by language
-        """
-        if self.translation is None and 'lang' in self.request.GET:
+    def _get_unit(self, form):
+        unit = form.cleaned_data.get("string")
+        if unit:
+            self.unit = unit
+            self.translation = translation = unit.translation
+            self.component = component = translation.component
+            self.project = component.project
+
+    def _get_queryset_language(self, form):
+        """Filtering by language."""
+        if self.translation is None and form.cleaned_data.get("lang"):
             try:
-                self.language = Language.objects.get(
-                    code=self.request.GET['lang']
-                )
+                self.language = Language.objects.get(code=form.cleaned_data["lang"])
             except Language.DoesNotExist:
-                messages.error(
-                    self.request,
-                    _('Failed to find matching language!')
-                )
+                messages.error(self.request, _("Failed to find matching language!"))
 
-    def _get_queryset_user(self):
-        """
-        Filtering by user
-        """
-        if 'user' in self.request.GET:
+    def _get_queryset_user(self, form):
+        """Filtering by user."""
+        if form.cleaned_data.get("user"):
             try:
-                self.user = User.objects.get(
-                    username=self.request.GET['user']
-                )
+                self.user = User.objects.get(username=form.cleaned_data["user"])
             except User.DoesNotExist:
-                messages.error(
-                    self.request,
-                    _('Failed to find matching user!')
-                )
+                messages.error(self.request, _("Failed to find matching user!"))
+
+    def _get_request_params(self):
+        self.changes_form = form = ChangesForm(self.request, data=self.request.GET)
+        if form.is_valid():
+            if "action" in form.cleaned_data:
+                self.actions.update(form.cleaned_data["action"])
+            if "start_date" in form.cleaned_data:
+                self.start_date = form.cleaned_data["start_date"]
+            if "end_date" in form.cleaned_data:
+                self.end_date = form.cleaned_data["end_date"]
 
     def get_queryset(self):
-        '''
-        Returns list of changes to browse.
-        '''
-        self._get_queryset_project()
+        """Return list of changes to browse."""
+        form = ChangesFilterForm(self.request, self.request.GET)
+        if form.is_valid():
+            self._get_queryset_project(form)
 
-        self._get_queryset_language()
+            self._get_unit(form)
 
-        self._get_queryset_user()
+            self._get_queryset_language(form)
 
-        # Glossary entries
-        self.glossary = 'glossary' in self.request.GET
+            self._get_queryset_user(form)
 
-        result = Change.objects.last_changes(self.request.user)
+            self._get_request_params()
+        else:
+            self.changes_form = ChangesForm(self.request, data=self.request.GET)
 
-        if self.translation is not None:
-            result = result.filter(
-                translation=self.translation
-            )
-        elif self.subproject is not None:
-            result = result.filter(
-                translation__subproject=self.subproject
-            )
-        elif self.project is not None:
-            result = result.filter(
-                Q(translation__subproject__project=self.project) |
-                Q(dictionary__project=self.project)
-            )
+        result = Change.objects.last_changes(
+            self.request.user, self.unit, self.translation, self.component, self.project
+        )
 
         if self.language is not None:
-            result = result.filter(
-                Q(translation__language=self.language) |
-                Q(dictionary__language=self.language)
-            )
+            result = result.filter(language=self.language)
 
-        if self.glossary:
-            result = result.filter(
-                dictionary__isnull=False
-            )
+        if self.actions:
+            result = result.filter(action__in=self.actions)
+
+        if self.start_date:
+            result = result.filter(timestamp__date__gte=self.start_date)
+
+        if self.end_date:
+            result = result.filter(timestamp__date__lte=self.end_date)
 
         if self.user is not None:
-            result = result.filter(
-                user=self.user
-            )
+            result = result.filter(user=self.user)
 
         return result
 
+    def paginate_queryset(self, queryset, page_size):
+        if not self.changes_form.is_valid():
+            queryset = queryset.none()
+        paginator, page, queryset, is_paginated = super().paginate_queryset(
+            queryset, page_size
+        )
+        page = Change.objects.preload_list(page)
+        return paginator, page, queryset, is_paginated
+
 
 class ChangesCSVView(ChangesView):
-    """CSV renderer for changes view"""
+    """CSV renderer for changes view."""
+
     paginate_by = None
 
     def get(self, request, *args, **kwargs):
-        object_list = self.get_queryset()
+        object_list = self.get_queryset()[:2000]
 
-        if not can_download_changes(request.user, self.project):
-            raise PermissionDenied()
+        # Do reasonable ACL check for global
+        acl_obj = self.translation or self.component or self.project
+        if not acl_obj:
+            for change in object_list:
+                if change.component:
+                    acl_obj = change.component
+                    break
+
+        if not request.user.has_perm("change.download", acl_obj):
+            raise PermissionDenied
 
         # Always output in english
-        activate('en')
+        activate("en")
 
-        response = HttpResponse(content_type='text/csv; charset=utf-8')
-        response['Content-Disposition'] = 'attachment; filename=changes.csv'
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = "attachment; filename=changes.csv"
 
         writer = csv.writer(response)
 
         # Add header
-        writer.writerow(('timestamp', 'action', 'user', 'url'))
+        writer.writerow(
+            ("timestamp", "action", "user", "url", "target", "edit_distance")
+        )
 
-        for change in object_list[:2000].iterator():
-            writer.writerow((
-                change.timestamp.isoformat(),
-                change.get_action_display().encode('utf8'),
-                change.user.username.encode('utf8') if change.user else '',
-                change.get_absolute_url(),
-            ))
+        for change in object_list:
+            writer.writerow(
+                (
+                    change.timestamp.isoformat(),
+                    change.get_action_display(),
+                    change.user.username if change.user else "",
+                    get_site_url(change.get_absolute_url()),
+                    change.target,
+                    change.get_distance(),
+                )
+            )
 
         return response
+
+
+@login_required
+def show_change(request, pk):
+    change = get_object_or_404(Change, pk=pk)
+    acl_obj = change.translation or change.component or change.project
+    if not request.user.has_perm("unit.edit", acl_obj):
+        raise PermissionDenied
+    others = request.GET.getlist("other")
+    changes = None
+    if others:
+        changes = Change.objects.filter(pk__in=[*others, change.pk])
+        for change in changes:
+            acl_obj = change.translation or change.component or change.project
+            if not request.user.has_perm("unit.edit", acl_obj):
+                raise PermissionDenied
+    if change.action not in NOTIFICATIONS_ACTIONS:
+        content = ""
+    else:
+        notifications = NOTIFICATIONS_ACTIONS[change.action]
+        notification = notifications[0](None)
+        context = notification.get_context(change if not others else None)
+        context["request"] = request
+        context["changes"] = changes
+        context["subject"] = notification.render_template(
+            "_subject.txt", context, digest=bool(others)
+        )
+        content = notification.render_template(".html", context, digest=bool(others))
+
+    return HttpResponse(content_type="text/html; charset=utf-8", content=content)

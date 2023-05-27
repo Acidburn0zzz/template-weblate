@@ -23,20 +23,7 @@ msgstr ""
 msgid "Hello, world!\n"
 msgstr "Ahoj světe!\n"
 
-#: main.c:12
+#: main.c:11
 #, c-format
-msgid "Orangutan has %d banana.\n"
-msgid_plural "Orangutan has %d bananas.\n"
-msgstr[0] ""
-msgstr[1] ""
-msgstr[2] ""
-msgstr[3] ""
-
-#: main.c:13
-#, c-format
-msgid "Try Weblate at <http://demo.weblate.org/>!\n"
-msgstr ""
-
-#: main.c:14
-msgid "Thank you for using Weblate."
-msgstr ""
+msgid "Goodbye, world!\n"
+msgstr "Čau světe!\n"

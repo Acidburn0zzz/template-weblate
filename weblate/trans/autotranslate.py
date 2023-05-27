@@ -1,81 +1,212 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
+from typing import List, Optional
+
+from celery import current_task
+from django.conf import settings
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
+from django.db.models.functions import MD5
 
-from weblate.trans.models import Unit, Change, SubProject
+from weblate.machinery.models import MACHINERY
+from weblate.trans.models import Change, Component, Suggestion, Unit
+from weblate.trans.util import split_plural
+from weblate.utils.state import STATE_APPROVED, STATE_FUZZY, STATE_TRANSLATED
 
 
-def auto_translate(user, translation, source, inconsistent, overwrite):
-    updated = 0
+class AutoTranslate:
+    def __init__(
+        self,
+        user,
+        translation,
+        filter_type: str,
+        mode: str,
+        component_wide: bool = False,
+    ):
+        self.user = user
+        self.translation = translation
+        translation.component.batch_checks = True
+        self.filter_type = filter_type
+        self.mode = mode
+        self.updated = 0
+        self.progress_steps = 0
+        self.target_state = STATE_TRANSLATED
+        if mode == "fuzzy":
+            self.target_state = STATE_FUZZY
+        elif mode == "approved":
+            self.target_state = STATE_APPROVED
+        self.component_wide = component_wide
 
-    if inconsistent:
-        units = translation.unit_set.filter_type(
-            'inconsistent', translation
+    def get_units(self, filter_mode=True):
+        units = self.translation.unit_set.all()
+        if self.mode == "suggest" and filter_mode:
+            units = units.filter(suggestion__isnull=True)
+        return units.filter_type(self.filter_type)
+
+    def set_progress(self, current):
+        if current_task and current_task.request.id and self.progress_steps:
+            current_task.update_state(
+                state="PROGRESS",
+                meta={
+                    "progress": 100 * current // self.progress_steps,
+                    "translation": self.translation.pk,
+                },
+            )
+
+    def update(self, unit, state, target):
+        if isinstance(target, str):
+            target = [target]
+        if self.mode == "suggest" or any(
+            len(item) > unit.get_max_length() for item in target
+        ):
+            Suggestion.objects.add(unit, target, None, False)
+        else:
+            unit.is_batch_update = True
+            unit.translate(
+                self.user, target, state, Change.ACTION_AUTO, propagate=False
+            )
+        self.updated += 1
+
+    def post_process(self):
+        if self.updated > 0:
+            if not self.component_wide:
+                self.translation.component.update_source_checks()
+                self.translation.component.run_batched_checks()
+            self.translation.invalidate_cache()
+            if self.user:
+                self.user.profile.increase_count("translated", self.updated)
+
+    @transaction.atomic
+    def process_others(self, source: Optional[int]):
+        """Perform automatic translation based on other components."""
+        kwargs = {
+            "translation__plural": self.translation.plural,
+            "state__gte": STATE_TRANSLATED,
+        }
+        source_language = self.translation.component.source_language
+        exclude = {}
+        if source:
+            component = Component.objects.get(id=source)
+
+            if (
+                not component.project.contribute_shared_tm
+                and not component.project != self.translation.component.project
+            ):
+                raise PermissionDenied(
+                    "Project has disabled contribution to shared translation memory."
+                )
+            if component.source_language != source_language:
+                raise PermissionDenied("Component have different source languages.")
+            kwargs["translation__component"] = component
+        else:
+            project = self.translation.component.project
+            kwargs["translation__component__project"] = project
+            kwargs["translation__component__source_language"] = source_language
+            exclude["translation"] = self.translation
+        sources = Unit.objects.filter(**kwargs)
+
+        # Use memory_db for the query in case it exists. This is supposed
+        # to be a read-only replica for offloading expensive translation
+        # queries.
+        if "memory_db" in settings.DATABASES:
+            sources = sources.using("memory_db")
+
+        if exclude:
+            sources = sources.exclude(**exclude)
+
+        # Fetch translations
+        translations = {
+            source: split_plural(target)
+            for source, state, target in sources.filter(
+                source__md5__in=self.get_units()
+                .annotate(source__md5=MD5("source"))
+                .values("source__md5")
+            ).values_list("source", "state", "target")
+        }
+
+        # We need to skip mode (suggestions) filtering here as SELECT FOR UPDATE
+        # cannot be used with JOIN
+        units = (
+            self.get_units(False)
+            .filter(source__in=translations.keys())
+            .prefetch_bulk()
+            .select_for_update()
         )
-    elif overwrite:
-        units = translation.unit_set.all()
-    else:
-        units = translation.unit_set.filter(translated=False)
+        self.progress_steps = len(units)
 
-    sources = Unit.objects.filter(
-        translation__language=translation.language,
-        translated=True
-    )
-    if source:
-        subprj = SubProject.objects.get(id=source)
-        if not subprj.has_acl(user):
-            raise PermissionDenied()
-        sources = sources.filter(translation__subproject=subprj)
-    else:
-        sources = sources.filter(
-            translation__subproject__project=translation.subproject.project
-        ).exclude(
-            translation=translation
+        for pos, unit in enumerate(units):
+            # Get update
+            try:
+                target = translations[unit.source]
+            except KeyError:
+                # Happens on MySQL due to case-insensitive lookup
+                continue
+
+            self.set_progress(pos)
+
+            # No save if translation is same or unit does not exist
+            if unit.state == self.target_state and unit.target == target:
+                continue
+            # Copy translation
+            self.update(unit, self.target_state, target)
+
+        self.post_process()
+
+    def fetch_mt(self, engines, threshold):
+        """Get the translations."""
+        units = self.get_units()
+        num_units = len(units)
+
+        machinery_settings = self.translation.component.project.get_machinery_settings()
+
+        engines = sorted(
+            (
+                MACHINERY[engine](setting)
+                for engine, setting in machinery_settings.items()
+                if engine in MACHINERY and engine in engines
+            ),
+            key=lambda engine: engine.get_rank(),
+            reverse=True,
         )
 
-    # Filter by strings
-    units = units.filter(
-        source__in=sources.values('source')
-    )
+        self.progress_steps = 2 * (len(engines) + num_units)
 
-    translation.commit_pending(None)
+        for pos, translation_service in enumerate(engines):
+            batch_size = translation_service.batch_size
 
-    for unit in units.iterator():
-        # Get first matching entry
-        update = sources.filter(source=unit.source)[0]
-        # No save if translation is same
-        if unit.fuzzy == update.fuzzy and unit.target == update.target:
-            continue
-        # Copy translation
-        unit.fuzzy = update.fuzzy
-        unit.target = update.target
-        # Create signle change object for whole merge
-        Change.objects.create(
-            action=Change.ACTION_AUTO,
-            unit=unit,
-            user=user,
-            author=user
-        )
-        # Save unit to backend
-        unit.save_backend(None, False, False, user=user)
-        updated += 1
+            for batch_start in range(0, num_units, batch_size):
+                translation_service.batch_translate(
+                    units[batch_start : batch_start + batch_size],
+                    self.user,
+                    threshold=threshold,
+                )
+                self.set_progress(pos * num_units + batch_start)
 
-    return updated
+        return {
+            unit.id: unit.machinery["translation"]
+            for unit in units
+            if unit.machinery and any(unit.machinery["quality"])
+        }
+
+    def process_mt(self, engines: List[str], threshold: int):
+        """Perform automatic translation based on machine translation."""
+        translations = self.fetch_mt(engines, int(threshold))
+
+        # Adjust total number to show correct progress
+        offset = self.progress_steps / 2
+        self.progress_steps = offset + len(translations)
+
+        with transaction.atomic():
+            # Perform the translation
+            for pos, unit in enumerate(
+                self.translation.unit_set.filter(id__in=translations.keys())
+                .prefetch_bulk()
+                .select_for_update()
+            ):
+                # Copy translation
+                self.update(unit, self.target_state, translations[unit.pk])
+                self.set_progress(offset + pos)
+
+            self.post_process()

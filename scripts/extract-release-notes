@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+
+# Copyright © Michal Čihař <michal@weblate.org>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+import sys
+
+if len(sys.argv) != 2:
+    raise ValueError("Missing argument")
+
+start = f"Weblate {sys.argv[1]}\n"
+display = False
+
+with open("docs/changes.rst") as handle:
+    for line in handle:
+        if display:
+            if line.startswith("Weblate "):
+                break
+            elif not line.startswith("--"):
+                print(line, end="")
+        elif line == start:
+            display = True
+            print(line, end="")

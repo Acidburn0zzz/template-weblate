@@ -1,67 +1,78 @@
 Translation progress reporting
 ==============================
 
-It is often useful to be able to see how translation progresses over given
-period. For this purpose Weblate includes reporting features, where you can
-obtain summaries of contributions to given component over time. You can find
-the reporting tool in the :guilabel:`Tools` menu for a translation component:
+Reporting features give insight into how a translation progresses over a given
+period. A summary of contributions to any given component over time is
+provided. The reporting tool is found in the :guilabel:`Insights` menu of any
+translation component, project or on the dashboard:
 
-.. image:: ../images/reporting.png
-    
+.. image:: /screenshots/reporting.png
+
 Several reporting tools are available on this page and all can produce output
 in HTML, reStructuredText or JSON. The first two formats are suitable for
-embedding into existing documentation, while JSON is useful for further
+embedding statistics into existing documentation, while JSON is useful for further
 processing of the data.
+
+.. _credits:
 
 Translator credits
 ------------------
 
-Generates document usable for crediting translators - sorted by language
-and listing all contributors to given language:
+Generates a document usable for crediting translators - sorted by language
+and lists all contributors to a given language:
 
 .. code-block:: rst
 
     * Czech
 
-        * Michal Čihař <michal@cihar.com>
-        * Weblate Admin <admin@example.com>
+        * John Doe <john@example.com> (5)
+        * Jane Doe <jane@example.com> (1)
 
     * Dutch
 
-        * Weblate Admin <admin@example.com>
+        * Jane Doe <jane@example.com> (42)
 
 
-And it will get rendered as:
+.. hint::
 
-    * Czech
+    The number in parenthesis indicates number of contributions in given period.
 
-        * Michal Čihař <michal@cihar.com>
-        * Weblate Admin <admin@example.com>
-
-    * Dutch
-
-        * Weblate Admin <admin@example.com>
+.. _stats:
 
 
 Contributor stats
 -----------------
 
-Generates number of words and units translated by translators:
+Generates the number of translated words and strings by translator name:
 
-.. code-block:: rst
+.. literalinclude:: reporting-example.rst
+    :language: rst
 
-    ======================================== ======================================== ========== ==========
-    Name                                     Email                                    Words      Count     
-    ======================================== ======================================== ========== ==========
-    Michal Čihař                             michal@cihar.com                               2332        421 
-    Weblate Admin                            admin@example.com                                25          8 
-    ======================================== ======================================== ========== ==========
+It can be useful if you pay your translators based on amount of work, it gives
+you various stats on translators work.
 
-And it will get rendered as:
+All stats are available in three variants:
 
-    ======================================== ======================================== ========== ==========
-    Name                                     Email                                    Words      Count     
-    ======================================== ======================================== ========== ==========
-    Michal Čihař                             michal@cihar.com                               2332        421 
-    Weblate Admin                            admin@example.com                                25          8 
-    ======================================== ======================================== ========== ==========
+`Total`
+   Overall number of edited strings.
+`New`
+   Newly translated strings which didn't have translation before.
+`Approved`
+   Count for string approvals in review workflow (see :ref:`reviews`).
+`Edited`
+   Edited strings which had translation before.
+
+The following metrics are available for each:
+
+`Count`
+   Number of strings.
+`Edits`
+   Number of edited characters in the string, measured in Damerau–Levenshtein distance.
+`Source words`
+   Number of words in the source string.
+`Source characters`
+   Number of characters in the source string.
+`Target words`
+   Number of words in the translated string.
+`Target characters`
+   Number of characters in the translated string.

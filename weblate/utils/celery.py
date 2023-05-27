@@ -1,0 +1,109 @@
+# Copyright © Michal Čihař <michal@weblate.org>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Celery integration helper tools."""
+
+import os
+
+from celery import Celery
+from celery.signals import after_setup_logger, task_failure
+from django.conf import settings
+from django.core.checks import run_checks
+
+# set the default Django settings module for the 'celery' program.
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "weblate.settings")
+
+app = Celery("weblate")
+
+# Using a string here means the worker doesn't have to serialize
+# the configuration object to child processes.
+# - namespace='CELERY' means all celery-related configuration keys
+#   should have a `CELERY_` prefix.
+app.config_from_object("django.conf:settings", namespace="CELERY")
+
+# Load task modules from all registered Django app configs.
+app.autodiscover_tasks()
+
+
+@task_failure.connect
+def handle_task_failure(exception=None, **kwargs):
+    from weblate.utils.errors import report_error
+
+    report_error(
+        extra_log=repr(kwargs),
+        cause="Failure while executing task",
+        skip_sentry=True,
+        print_tb=True,
+        level="error",
+    )
+
+
+@app.on_after_configure.connect
+def configure_error_handling(sender, **kargs):
+    """Rollbar and Sentry integration."""
+    from weblate.utils.errors import init_error_collection
+
+    init_error_collection(celery=True)
+
+
+@after_setup_logger.connect
+def show_failing_system_check(sender, logger, **kwargs):
+    if settings.DEBUG:
+        for check in run_checks(include_deployment_checks=True):
+            # Skip silenced checks and Celery one
+            # (it fails when started from Celery startup)
+            if check.is_silenced() or check.id == "weblate.E019":
+                continue
+            logger.warning("%s", check)
+
+
+def get_queue_length(queue="celery"):
+    with app.connection_or_acquire() as conn:
+        return conn.default_channel.queue_declare(
+            queue=queue, durable=True, auto_delete=False
+        ).message_count
+
+
+def get_queue_list():
+    """List queues in Celery."""
+    result = {"celery"}
+    for route in settings.CELERY_TASK_ROUTES.values():
+        if "queue" in route:
+            result.add(route["queue"])
+    return result
+
+
+def get_queue_stats():
+    """Calculate queue stats."""
+    return {queue: get_queue_length(queue) for queue in get_queue_list()}
+
+
+def is_task_ready(task):
+    """
+    Workaround broken ready() for failed Celery results.
+
+    In case the task ends with an exception, the result tries to reconstruct
+    that. It can fail in case the exception can not be reconstructed using
+    data in args attribute.
+
+    See https://github.com/celery/celery/issues/5057
+    """
+    try:
+        return task.ready()
+    except TypeError:
+        return True
+
+
+def get_task_progress(task):
+    """Return progress of a Celery task."""
+    # Completed task
+    if is_task_ready(task):
+        return 100
+    # In progress
+    result = task.result
+    if task.state == "PROGRESS" and result is not None:
+        return result["progress"]
+
+    # Not yet started
+    return 0

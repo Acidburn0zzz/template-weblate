@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% load humanize %}
+{% load metrics %}
+
+{% block breadcrumbs %}
+<li><a href="{% url 'about' %}">{% trans "About Weblate" %}</a></li>
+<li><a href="{% url 'stats' %}">{% trans "Statistics" %}</a></li>
+{% endblock %}
+
+{% block content %}
+
+{% include "snippets/info.html" with metrics=None|metrics show_global=True show_source=True %}
+
+{% endblock %}

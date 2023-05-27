@@ -1,25 +1,11 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from unittest import TestCase
+
 from django.http import HttpRequest
+
 from weblate.trans.debug import WeblateExceptionReporterFilter
 
 
@@ -33,17 +19,11 @@ class ReportFilterTest(TestCase):
         reporter = WeblateExceptionReporterFilter()
         request = HttpRequest()
         reporter.get_post_parameters(request)
-        self.assertIn(
-            'WEBLATE_VERSION:Weblate',
-            request.META
-        )
+        self.assertIn("WEBLATE_VERSION:Weblate", request.META)
 
     def test_report_language(self):
         reporter = WeblateExceptionReporterFilter()
         request = HttpRequest()
-        request.session = {'django_language': 'testlang'}
+        request.session = {"django_language": "testlang"}
         reporter.get_post_parameters(request)
-        self.assertIn(
-            'WEBLATE_LANGUAGE',
-            request.META
-        )
+        self.assertIn("WEBLATE_LANGUAGE", request.META)

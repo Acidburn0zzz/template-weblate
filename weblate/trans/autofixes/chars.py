@@ -1,55 +1,61 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-from __future__ import unicode_literals
+from django.utils.translation import gettext_lazy as _
 
-from django.utils.translation import ugettext_lazy as _
-
+from weblate.formats.helpers import CONTROLCHARS_TRANS
 from weblate.trans.autofixes.base import AutoFix
 
 
 class ReplaceTrailingDotsWithEllipsis(AutoFix):
-    '''
-    Replace Trailing Dots with an Ellipsis.
-    '''
+    """Replace trailing dots with an ellipsis."""
 
-    fix_id = 'end-ellipsis'
-    name = _('Trailing ellipsis')
+    fix_id = "end-ellipsis"
+    name = _("Trailing ellipsis")
 
     def fix_single_target(self, target, source, unit):
-        if source and source[-1] == '…' and target.endswith('...'):
-            return '%s…' % target[:-3], True
+        if source and source[-1] == "…" and target.endswith("..."):
+            return f"{target[:-3]}…", True
         return target, False
 
 
 class RemoveZeroSpace(AutoFix):
-    '''
-    Remove zero width space if there is none in the source.
-    '''
+    """Remove zero width space if there is none in the source."""
 
-    fix_id = 'zero-width-space'
-    name = _('Zero-width space')
+    fix_id = "zero-width-space"
+    name = _("Zero-width space")
 
     def fix_single_target(self, target, source, unit):
-        if unit.translation.language.code.split('_')[0] == 'km':
+        if unit.translation.language.base_code == "km":
             return target, False
-        if '\u200b' not in source and '\u200b' in target:
-            return target.replace('\u200b', ''), True
+        if "\u200b" not in source and "\u200b" in target:
+            return target.replace("\u200b", ""), True
+        return target, False
+
+
+class RemoveControlChars(AutoFix):
+    """Remove control characters from the string."""
+
+    fix_id = "control-chars"
+    name = _("Control characters")
+
+    def fix_single_target(self, target, source, unit):
+        result = target.translate(CONTROLCHARS_TRANS)
+        return result, result != target
+
+
+class DevanagariDanda(AutoFix):
+    """Fixes Bangla sentence ender."""
+
+    fix_id = "devanadari-danda"
+    name = _("Devanagari danda")
+
+    def fix_single_target(self, target, source, unit):
+        if (
+            unit.translation.language.base_code in ("hi", "bn", "or")
+            and source.endswith(".")
+            and target.endswith((".", "\u09F7", "|"))
+        ):
+            return f"{target[:-1]}\u0964", True
         return target, False

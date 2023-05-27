@@ -1,26 +1,35 @@
 .. _continuous-translation:
 
-Continuous translation
-======================
+Continuous localization
+=======================
 
-Weblate provides you great infrastructure for translation to closely follow
-your development. This way translators can work on translations whole time and
-are not forced to translate huge amount of new texts before release.
+There is infrastructure in place so that your translation closely follows
+development. This way translators can work on translations the entire time,
+instead of working through huge amount of new text just prior to release.
 
-The complete process can be described in following steps:
+.. seealso::
 
-1. Developers make some changes and push them to the VCS repository.
-2. Optionally the translation files are updated (this depends on the file format, see :ref:`translations-update`).
+   :doc:`/devel/integration` describes basic ways to integrate your development
+   with Weblate.
+
+This is the process:
+
+1. Developers make changes and push them to the VCS repository.
+2. Optionally the translation files are updated, see :ref:`translations-update`.
 3. Weblate pulls changes from the VCS repository, see :ref:`update-vcs`.
-4. Once Weblate detects changes in translations, translators will be notified based on their subscription settings.
-5. Translators make translations using Weblate web interface.
-6. Once translators are done, Weblate commits the changes to the local repository (see :ref:`lazy-commit`) and pushes them back if it has permissions to do that (see :ref:`push-changes`).
+4. Once Weblate detects changes in translations, translators are notified based on their subscription settings.
+5. Translators submit translations using the Weblate web interface, or upload offline changes.
+6. Once the translators are finished, Weblate commits the changes to the local repository (see :ref:`lazy-commit`) and pushes them back if it has permissions to do so (see :ref:`push-changes`).
 
 .. graphviz::
 
     digraph translations {
-        "Developers" [shape=box, fillcolor=lightgreen, style=filled];
-        "Translators" [shape=box, fillcolor=lightgreen, style=filled];
+        graph [fontname = "sans-serif", fontsize=10];
+        node [fontname = "sans-serif", fontsize=10, margin=0.1, height=0];
+        edge [fontname = "sans-serif", fontsize=10];
+
+        "Developers" [shape=box, fillcolor="#144d3f", fontcolor=white, style=filled];
+        "Translators" [shape=box, fillcolor="#144d3f", fontcolor=white, style=filled];
 
         "Developers" -> "VCS repository" [label=" 1. Push "];
 
@@ -40,57 +49,117 @@ The complete process can be described in following steps:
 Updating repositories
 ---------------------
 
-You should set up some way how backend repositories are updated from their
-source. You can either use hooks (see :ref:`hooks`) or just regularly run
-:djadmin:`updategit --all`.
+You should set up some way of updating backend repositories from their
+source.
 
-Whenever Weblate updates the repository, the :guilabel:`Post-update script`
-hooks are executed.
+* Use :ref:`hooks` to integrate with most of common code hosting services:
 
-With Gettext po files, you might be often bitten by conflict in PO file
-headers. To avoid it, you can use shipped merge driver
-(:file:`examples/git-merge-gettext-po`). To use it just put following
-configuration to your :file:`.gitconfig`:
+  * :ref:`github-setup`
+  * :ref:`gitlab-setup`
+  * :ref:`bitbucket-setup`
+  * :ref:`pagure-setup`
+  * :ref:`azure-setup`
+  * :ref:`gitea-setup`
 
-.. code-block:: ini
+* Manually trigger update either in the repository management or using :ref:`api` or :ref:`wlc`
 
-   [merge "merge-gettext-po"]
-     name = merge driver for gettext po files
-     driver = /path/to/weblate/examples/git-merge-gettext-po %O %A %B
+* Enable :setting:`AUTO_UPDATE` to automatically update all components on your Weblate instance
 
-And enable its use by defining proper attributes in given repository (eg. in
-:file:`.git/info/attributes`)::
+* Execute :wladmin:`updategit` (with selection of project or ``--all`` to update all)
 
-    *.po merge=merge-gettext-po
+Whenever Weblate updates the repository, the post-update addons will be
+triggered, see :ref:`addons`.
+
+.. _avoid-merge-conflicts:
+
+Avoiding merge conflicts
+++++++++++++++++++++++++
+
+The merge conflicts from Weblate arise when same file was changed both in
+Weblate and outside it. There are two approaches to deal with that - avoid
+edits outside Weblate or integrate Weblate into your updating process, so that
+it flushes changes prior to updating the files outside Weblate.
+
+The first approach is easy with monolingual files - you can add new strings
+within Weblate and leave whole editing of the files there. For bilingual files,
+there is usually some kind of message extraction process to generate
+translatable files from the source code. In some cases this can be split into
+two parts - one for the extraction generates template (for example gettext POT
+is generated using :program:`xgettext`) and then further process merges it into
+actual translations (the gettext PO files are updated using
+:program:`msgmerge`). You can perform the second step within Weblate and it
+will make sure that all pending changes are included prior to this operation.
+
+The second approach can be achieved by using :ref:`api` to force Weblate to
+push all pending changes and lock the translation while you are doing changes
+on your side.
+
+The script for doing updates can look like this:
+
+.. code-block:: sh
+
+    # Lock Weblate translation
+    wlc lock
+    # Push changes from Weblate to upstream repository
+    wlc push
+    # Pull changes from upstream repository to your local copy
+    git pull
+    # Update translation files, this example is for Django
+    ./manage.py makemessages --keep-pot -a
+    git commit -m 'Locale updates' -- locale
+    # Push changes to upstream repository
+    git push
+    # Tell Weblate to pull changes (not needed if Weblate follows your repo
+    # automatically)
+    wlc pull
+    # Unlock translations
+    wlc unlock
+
+If you have multiple components sharing same repository, you need to lock them
+all separately:
+
+.. code-block:: sh
+
+    wlc lock foo/bar
+    wlc lock foo/baz
+    wlc lock foo/baj
 
 .. note::
 
-    This merge driver assumes the changes in POT files always are done in branch
-    we're trying to merge.
+    The example uses :ref:`wlc`, which needs configuration (API keys) to be
+    able to control Weblate remotely. You can also achieve this using any HTTP
+    client instead of wlc, e.g. curl, see :ref:`api`.
+
+.. seealso::
+
+   :ref:`wlc`
 
 .. _github-setup:
 
 Automatically receiving changes from GitHub
 +++++++++++++++++++++++++++++++++++++++++++
 
-Weblate comes with native support for GitHub. To receive notifications on every
-push to GitHub repository, you just need to enable Weblate Service in the
-repository settings (:guilabel:`Webhooks & Services`) as shown on the image below:
+Weblate comes with native support for GitHub.
 
-.. image:: ../images/github-settings.png
+If you are using Hosted Weblate, the recommended approach is to install the
+`Weblate app <https://github.com/apps/weblate>`_, that way you will get the
+correct setup without having to set much up. It can also be used for pushing
+changes back.
 
-To set the base URL of your Weblate installation (for example
-``https://hosted.weblate.org``) and Weblate will be notified about every push
-to GitHub repository:
+To receive notifications on every push to a GitHub repository,
+add the Weblate Webhook in the repository settings (:guilabel:`Webhooks`)
+as shown on the image below:
 
-.. image:: ../images/github-settings-edit.png
+.. image:: /images/github-settings.png
 
-You can also use generic :guilabel:`Webhook`, in that case the
-:guilabel:`Payload URL` would have to be full path to the handler, for example
-``https://hosted.weblate.org/hooks/github/``.
+For the payload URL, append ``/hooks/github/`` to your Weblate URL, for example
+for the Hosted Weblate service, this is ``https://hosted.weblate.org/hooks/github/``.
+
+You can leave other values at default settings (Weblate can handle both
+content types and consumes just the `push` event).
 
 .. seealso::
-   
+
    :http:post:`/hooks/github/`, :ref:`hosted-push`
 
 .. _bitbucket-setup:
@@ -98,15 +167,15 @@ You can also use generic :guilabel:`Webhook`, in that case the
 Automatically receiving changes from Bitbucket
 ++++++++++++++++++++++++++++++++++++++++++++++
 
-Weblate has support for Bitbucket webhooks, all you need to do is add webhook
-which triggers on repository push with destination to ``/hooks/bitbucket/`` URL
+Weblate has support for Bitbucket webhooks, add a webhook
+which triggers upon repository push, with destination to ``/hooks/bitbucket/`` URL
 on your Weblate installation (for example
 ``https://hosted.weblate.org/hooks/bitbucket/``).
 
-.. image:: ../images/bitbucket-settings.png
+.. image:: /images/bitbucket-settings.png
 
-.. seealso:: 
-   
+.. seealso::
+
    :http:post:`/hooks/bitbucket/`, :ref:`hosted-push`
 
 .. _gitlab-setup:
@@ -114,90 +183,178 @@ on your Weblate installation (for example
 Automatically receiving changes from GitLab
 +++++++++++++++++++++++++++++++++++++++++++
 
-Weblate has support for GitLab hooks, all you need to do is add project web hook
+Weblate has support for GitLab hooks, add a project webhook
 with destination to ``/hooks/gitlab/`` URL on your Weblate installation
 (for example ``https://hosted.weblate.org/hooks/gitlab/``).
 
-.. seealso:: 
-   
+.. seealso::
+
    :http:post:`/hooks/gitlab/`, :ref:`hosted-push`
 
-.. _push-changes:
+.. _pagure-setup:
 
-Pushing changes
----------------
+Automatically receiving changes from Pagure
++++++++++++++++++++++++++++++++++++++++++++
 
-Each project can have configured push URL and in such case Weblate offers
-button to push changes to remote repository in web interface.
-Weblate can be also configured to automatically push changes on every commit.
+.. versionadded:: 3.3
 
-If you are using SSH to push, you will need to have a key without a passphrase
-(or use ssh-agent for Django) and the remote server needs to be verified by you
-via the admin interface first, otherwise pushing will fail.
+Weblate has support for Pagure hooks, add a webhook
+with destination to ``/hooks/pagure/`` URL on your Weblate installation (for
+example ``https://hosted.weblate.org/hooks/pagure/``). This can be done in
+:guilabel:`Activate Web-hooks` under :guilabel:`Project options`:
 
-.. note::
-
-   You can also enable automatic pushing changes on commit, this can be done in
-   project configuration.
+.. image:: /images/pagure-webhook.png
 
 .. seealso::
 
-    See :ref:`vcs-repos` for setting up SSH keys and :ref:`lazy-commit` for
-    information about when Weblate decides to commit changes.
+   :http:post:`/hooks/pagure/`, :ref:`hosted-push`
 
-.. _github-push:
+.. _azure-setup:
 
-Pushing changes to GitHub as pull request
-+++++++++++++++++++++++++++++++++++++++++
+Automatically receiving changes from Azure Repos
+++++++++++++++++++++++++++++++++++++++++++++++++
+
+.. versionadded:: 3.8
+
+Weblate has support for Azure Repos web hooks, add a webhook for
+:guilabel:`Code pushed` event with destination to ``/hooks/azure/`` URL on your
+Weblate installation (for example ``https://hosted.weblate.org/hooks/azure/``).
+This can be done in :guilabel:`Service hooks` under :guilabel:`Project
+settings`.
+
+
+.. seealso::
+
+   `Web hooks in Azure DevOps manual <https://learn.microsoft.com/en-us/azure/devops/service-hooks/services/webhooks?view=azure-devops>`_,
+   :http:post:`/hooks/azure/`, :ref:`hosted-push`
+
+.. _gitea-setup:
+
+Automatically receiving changes from Gitea Repos
+++++++++++++++++++++++++++++++++++++++++++++++++
+
+.. versionadded:: 3.9
+
+Weblate has support for Gitea webhooks, add a :guilabel:`Gitea Webhook` for
+:guilabel:`Push events` event with destination to ``/hooks/gitea/`` URL on your
+Weblate installation (for example ``https://hosted.weblate.org/hooks/gitea/``).
+This can be done in :guilabel:`Webhooks` under repository :guilabel:`Settings`.
+
+.. seealso::
+
+   `Webhooks in Gitea manual <https://docs.gitea.io/en-us/webhooks/>`_,
+   :http:post:`/hooks/gitea/`, :ref:`hosted-push`
+
+.. _gitee-setup:
+
+Automatically receiving changes from Gitee Repos
+++++++++++++++++++++++++++++++++++++++++++++++++
+
+.. versionadded:: 3.9
+
+Weblate has support for Gitee webhooks, add a :guilabel:`WebHook` for
+:guilabel:`Push` event with destination to ``/hooks/gitee/`` URL on your
+Weblate installation (for example ``https://hosted.weblate.org/hooks/gitee/``).
+This can be done in :guilabel:`WebHooks` under repository :guilabel:`Management`.
+
+.. seealso::
+
+   `Webhooks in Gitee manual <https://gitee.com/help/categories/40>`_,
+   :http:post:`/hooks/gitee/`, :ref:`hosted-push`
+
+Automatically updating repositories nightly
++++++++++++++++++++++++++++++++++++++++++++
+
+Weblate automatically fetches remote repositories nightly to improve
+performance when merging changes later. You can optionally turn this into doing
+nightly merges as well, by enabling :setting:`AUTO_UPDATE`.
+
+.. _push-changes:
+
+Pushing changes from Weblate
+----------------------------
+
+Each translation component can have a push URL set up (see
+:ref:`component-push`), and in that case Weblate will be able to push change to
+the remote repository.  Weblate can be also be configured to automatically push
+changes on every commit (this is default, see :ref:`component-push_on_commit`).
+If you do not want changes to be pushed automatically, you can do that manually
+under :guilabel:`Repository maintenance` or using API via :option:`wlc push`.
+
+The push options differ based on the :ref:`vcs` used, more details are found in that chapter.
+
+In case you do not want direct pushes by Weblate, there is support for
+:ref:`vcs-github`, :ref:`vcs-gitlab`, :ref:`vcs-gitea`, :ref:`vcs-pagure` pull requests or
+:ref:`vcs-gerrit` reviews, you can activate these by choosing
+:guilabel:`GitHub`, :guilabel:`GitLab`, :guilabel:`Gitea`, :guilabel:`Gerrit` or
+:guilabel:`Pagure` as :ref:`component-vcs` in :ref:`component`.
+
+Overall, following options are available with Git, GitHub and GitLab:
+
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| Desired setup                     | :ref:`component-vcs`          | :ref:`component-push`         | :ref:`component-push_branch`  |
++===================================+===============================+===============================+===============================+
+| No push                           | :ref:`vcs-git`                | `empty`                       | `empty`                       |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| Push directly                     | :ref:`vcs-git`                | SSH URL                       | `empty`                       |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| Push to separate branch           | :ref:`vcs-git`                | SSH URL                       | Branch name                   |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| No push                           | :ref:`vcs-mercurial`          | `empty`                       | `empty`                       |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| Push directly                     | :ref:`vcs-mercurial`          | SSH URL                       | `empty`                       |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| Push to separate branch           | :ref:`vcs-mercurial`          | SSH URL                       | Branch name                   |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| GitHub pull request from fork     | :ref:`vcs-github`             | `empty`                       | `empty`                       |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| GitHub pull request from branch   | :ref:`vcs-github`             | SSH URL [#empty]_             | Branch name                   |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| GitLab merge request from fork    | :ref:`vcs-gitlab`             | `empty`                       | `empty`                       |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| GitLab merge request from branch  | :ref:`vcs-gitlab`             | SSH URL [#empty]_             | Branch name                   |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| Gitea merge request from fork     | :ref:`vcs-gitea`              | `empty`                       | `empty`                       |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| Gitea merge request from branch   | :ref:`vcs-gitea`              | SSH URL [#empty]_             | Branch name                   |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| Pagure merge request from fork    | :ref:`vcs-pagure`             | `empty`                       | `empty`                       |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+| Pagure merge request from branch  | :ref:`vcs-pagure`             | SSH URL [#empty]_             | Branch name                   |
++-----------------------------------+-------------------------------+-------------------------------+-------------------------------+
+
+.. [#empty] Can be empty in case :ref:`component-repo` supports pushing.
+
 
 .. note::
 
-    This feature is currently not available on Hosted Weblate due to technical
-    limitations. See :ref:`hosted-push` for available options.
+   You can also enable automatic pushing of changes after Weblate commits, this can be done in
+   :ref:`component-push_on_commit`.
 
-If you are translating a project that's hosted on GitHub and don't want to
-push translations to the repository, you can have them sent as a pull request instead.
+.. seealso::
 
-You need to configure the :guilabel:`hub` command line tool and set :setting:`GITHUB_USERNAME` for this to work.
+    See :ref:`vcs-repos` for setting up SSH keys, and :ref:`lazy-commit` for
+    info about when Weblate decides to commit changes.
 
-.. seealso:: 
-   
-   :setting:`GITHUB_USERNAME`, :ref:`hub-setup` for configuration instructions
+Protected branches
+++++++++++++++++++
 
+If you are using Weblate on protected branch, you can configure it to use pull
+requests and perform actual review on the translations (what might be
+problematic for languages you do not know). An alternative approach is to waive
+this limitation for the Weblate push user.
 
-.. _hosted-push:
+For example on GitHub this can be done in the repository configuration:
 
-Pushing changes from Hosted Weblate
-+++++++++++++++++++++++++++++++++++
-
-For Hosted Weblate there is dedicated push user registered on GitHub, Bitbucket
-and GitLab (with username :guilabel:`weblate` and named
-:guilabel:`Weblate push user`). You need to add this user as a collabolator and
-give him permissions to push to your repository. Let us know when you've done
-so and we will enable pushing changes from Hosted Weblate for you.
-
-.. _merge-rebase:
-
-Merge or rebase
----------------
-
-By default Weblate merges upstream repository into its own. This is safest way
-in case you also access underlying repository by other means. In case you don't
-need this, you can enable rebasing of changes on upstream, what will produce
-history with less merge commits.
-
-.. note::
-
-    Rebasing can cause you troubles in case of complicated merges, so carefully
-    consider whether you want to enable them or not.
+.. image:: /images/github-protected.png
 
 Interacting with others
 -----------------------
 
 Weblate makes it easy to interact with others using its API.
 
-.. seealso:: 
-   
+.. seealso::
+
    :ref:`api`
 
 .. _lazy-commit:
@@ -205,132 +362,75 @@ Weblate makes it easy to interact with others using its API.
 Lazy commits
 ------------
 
-Default behaviour (configured by :setting:`LAZY_COMMITS`) of Weblate is to group
-commits from same author into one if possible. This heavily reduces number of
-commits, however you might need to explicitly tell to do the commits in case
-you want to get VCS repository in sync, eg. for merge (this is by default
-allowed for Managers group, see :ref:`privileges`).
+The behaviour of Weblate is to group commits from the same author into one
+commit if possible. This greatly reduces the number of commits, however you
+might need to explicitly tell it to do the commits in case you want to get the
+VCS repository in sync, e.g. for merge (this is by default allowed for the :guilabel:`Managers`
+group, see :ref:`privileges`).
 
-The changes are in this mode committed once any of following conditions is
+The changes in this mode are committed once any of the following conditions are
 fulfilled:
 
-* somebody else works on the translation
-* merge from upstream occurs
-* import of translation happens
-* translation for a language is completed
-* explicit commit is requested
+* Somebody else changes an already changed string.
+* A merge from upstream occurs.
+* An explicit commit is requested.
+* A file download is requested.
+* Change is older than period defined as :ref:`component-commit_pending_age` on :ref:`component`.
 
-You can also additionally set a cron job to commit pending changes after some
-delay, see :djadmin:`commit_pending` and :ref:`production-cron`.
+.. hint::
+
+   Commits are created for every component. So in case you have many components
+   you will still see lot of commits. You might utilize
+   :ref:`addon-weblate.git.squash` add-on in that case.
+
+If you want to commit changes more frequently and without checking of age, you
+can schedule a regular task to perform a commit. This can be done using
+:guilabel:`Periodic Tasks` in :ref:`admin-interface`. First create desired
+:guilabel:`Interval` (for example 120 seconds). Then add new periodic task and
+choose ``weblate.trans.tasks.commit_pending`` as :guilabel:`Task` with
+``{"hours": 0}`` as :guilabel:`Keyword Arguments` and desired interval.
 
 .. _processing:
 
 Processing repository with scripts
 ----------------------------------
 
-You can customize way how Weblate manipulates with repository by set of
-scripts. These include :guilabel:`Post-update script`, :guilabel:`Pre-commit
-script`, :guilabel:`Post-commit script`, :guilabel:`Post-add script` and
-:guilabel:`Post-push script` and are briefly described in :ref:`component`.
+The way to customize how Weblate interacts with the repository is
+:ref:`addons`. Consult :ref:`addon-script` for info on how to execute
+external scripts through add-ons.
 
-Their naming quite clearly tells when given script is executed. The commit
-related scripts always get one parameter with full path to the translation file
-which has been changed.
+.. _translation-consistency:
 
-The script is executed with the current directory set to root of VCS repository
-for given component.
+Keeping translations same across components
+-------------------------------------------
 
-Additionally following environment variables are available:
+Once you have multiple translation components, you might want to ensure that
+the same strings have same translation. This can be achieved at several levels.
 
-.. envvar:: WL_VCS
+Translation propagation
++++++++++++++++++++++++
 
-    Used version control system.
+With :ref:`component-allow_translation_propagation` enabled (what is the default, see
+:ref:`component`), all new translations are automatically done in all
+components with matching strings. Such translations are properly credited to
+currently translating user in all components.
 
-.. envvar:: WL_REPO
+.. note::
 
-    Upstream repository URL.
+   The translation propagation requires the key to be match for monolingual
+   translation formats, so keep that in mind when creating translation keys.
 
-.. envvar:: WL_PATH
+Consistency check
++++++++++++++++++
 
-    Absolute path to VCS repository.
+The :ref:`check-inconsistent` check fires whenever the strings are different.
+You can utilize this to review such differences manually and choose the right
+translation.
 
-.. envvar:: WL_FILEMASK
+Automatic translation
++++++++++++++++++++++
 
-    File mask for current component.
-
-.. envvar:: WL_TEMPLATE
-
-    File name of template for monolingual translations (can be empty).
-
-.. envvar:: WL_FILE_FORMAT
-
-    File format used in current component.
-
-.. envvar:: WL_LANGUAGE
-
-    Language of currently processed translation (not available for component
-    level hooks).
-
-.. seealso::
-
-    :setting:`POST_UPDATE_SCRIPTS`,
-    :setting:`PRE_COMMIT_SCRIPTS`,
-    :setting:`POST_COMMIT_SCRIPTS`,
-    :setting:`POST_PUSH_SCRIPTS`,
-    :ref:`component`
-
-Post update repository processing
-+++++++++++++++++++++++++++++++++
-
-Post update repository processing can be used to update translation files on
-the source change. To achieve this, please remember that Weblate only sees
-files which are committed to the VCS, so you need to commit changes as a part
-of the script.
-
-For example with gulp you can do it using following code:
-
-.. code-block:: sh
-
-    #! /bin/sh
-    gulp --gulpfile gulp-i18n-extract.js
-    git commit -m 'Update source strings' src/languages/en.lang.json
-
-
-Pre commit processing of translations
-+++++++++++++++++++++++++++++++++++++
-
-In many cases you might want to automatically do some changes to translation
-before it is committed to the repository. The pre commit script is exactly the
-place to achieve this.
-
-Before using any scripts, you need to list them in
-:setting:`PRE_COMMIT_SCRIPTS` configuration variable. Then you can enable them
-at :ref:`component` configuration as :guilabel:`Pre commit script`.
-
-It is passed single parameter consisting of file name of current translation.
-
-The script can also generate additional file to be included in the commit. This
-can be configured as :guilabel:`Extra commit file` at :ref:`component`
-configuration. You can use following format strings in the filename:
-
-``%(language)s``
-    Language code
-
-Example - generating mo files in repository
-+++++++++++++++++++++++++++++++++++++++++++
-
-Allow usage of the hook in the configuration
-
-.. code-block:: python
-
-    PRE_COMMIT_SCRIPTS = (
-        '/usr/share/weblate/examples/hook-generate-mo',
-    )
-
-To enable it, choose now :guilabel:`hook-generate-mo` as :guilabel:`Pre commit
-script`. You will also want to add path to generated files to be included in
-VCS commit, for example ``po/%(language)s.mo`` as :guilabel:`Extra commit file`.
-
-
-You can find more example scripts in ``examples`` folder within Weblate sources,
-their name start with ``hook-``.
+Automatic translation based on different components can be way to synchronize
+the translations across components. You can either trigger it manually (see
+:ref:`auto-translation`) or make it run automatically on repository update
+using add-on (see :ref:`addon-weblate.autotranslate.autotranslate`).

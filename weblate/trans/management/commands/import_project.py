@@ -1,408 +1,343 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
-from glob import glob
-from optparse import make_option
-import tempfile
 import os
 import re
-import shutil
-import fnmatch
+import tempfile
 
-from django.core.management.base import BaseCommand, CommandError
-from django.utils.encoding import force_text
-from django.db.models import Q
-from django.utils.text import slugify
+from django.conf import settings
+from django.core.management.base import CommandError
 
-from weblate.trans.models import SubProject, Project
-from weblate.trans.formats import FILE_FORMATS
-from weblate.trans.util import is_repo_link
-from weblate.trans.vcs import GitRepository
+from weblate.formats.models import FILE_FORMATS
+from weblate.lang.models import Language
 from weblate.logger import LOGGER
+from weblate.trans.discovery import ComponentDiscovery
+from weblate.trans.models import Component, Project
+from weblate.trans.util import is_repo_link
+from weblate.utils.files import remove_tree
+from weblate.utils.management.base import BaseCommand
+from weblate.vcs.base import RepositoryException
+from weblate.vcs.models import VCS_REGISTRY
 
 
 class Command(BaseCommand):
-    """
-    Command for mass importing of repositories into Weblate.
-    """
-    help = 'imports projects with more components'
-    args = '<project> <gitrepo> <branch> <filemask>'
-    option_list = BaseCommand.option_list + (
-        make_option(
-            '--name-template',
-            default='%s',
+    """Command for mass importing of repositories into Weblate."""
+
+    help = "imports projects with more components"
+
+    def add_arguments(self, parser):
+        super().add_arguments(parser)
+        parser.add_argument(
+            "--name-template",
+            default="{{ component }}",
+            help="Template string, transforming the file mask match to a project name",
+        )
+        parser.add_argument(
+            "--base-file-template",
+            default="",
             help=(
-                'Python formatting string, transforming the filemask '
-                'match to a project name'
-            )
-        ),
-        make_option(
-            '--component-regexp',
-            default=None,
-            help=(
-                'Regular expression to match component out of filename'
-            )
-        ),
-        make_option(
-            '--base-file-template',
-            default='',
-            help=(
-                'Python formatting string, transforming the filemask '
-                'match to a monolingual base file name'
-            )
-        ),
-        make_option(
-            '--file-format',
-            default='auto',
-            help='File format type, defaults to autodetection',
-        ),
-        make_option(
-            '--language-regex',
-            default=None,
-            help=(
-                'Language filter regular expression to be used for created'
-                ' components'
+                "Template string, transforming the file mask "
+                "match to a monolingual base filename"
             ),
-        ),
-        make_option(
-            '--no-skip-duplicates',
-            action='store_true',
+        )
+        parser.add_argument(
+            "--new-base-template",
+            default="",
+            help=(
+                "Template string, transforming the file mask "
+                "match to a base filename for new translations"
+            ),
+        )
+        parser.add_argument(
+            "--file-format",
+            default="po",
+            help="File format type, defaults to Gettext PO",
+        )
+        parser.add_argument(
+            "--language-regex",
+            default="^[^.]+$",
+            help=(
+                "Language filter regular expression to be used for created"
+                " components"
+            ),
+        )
+        parser.add_argument(
+            "--license", default="", help="License of imported components"
+        )
+        parser.add_argument(
+            "--license-url", default="", help="License URL of imported components"
+        )
+        parser.add_argument(
+            "--vcs", default=settings.DEFAULT_VCS, help="Version control system to use"
+        )
+        parser.add_argument(
+            "--push-url", default="", help="Set push URL for the project"
+        )
+        parser.add_argument(
+            "--push-url-same",
+            action="store_true",
             default=False,
-            dest='duplicates',
-            help=(
-                'Avoid skipping duplicate component names/slugs. '
-                'Use this if importing project with long names '
-            )
-        ),
-        make_option(
-            '--license',
-            default=None,
-            help='License of imported components',
-        ),
-        make_option(
-            '--license-url',
-            default=None,
-            help='License URL of imported components',
-        ),
-        make_option(
-            '--vcs',
-            default='git',
-            help='Version control system to use',
-        ),
-        make_option(
-            '--main-component',
+            help="Set push URL for the project to same as pull",
+        )
+        parser.add_argument(
+            "--disable-push-on-commit",
+            action="store_false",
+            default=settings.DEFAULT_PUSH_ON_COMMIT,
+            dest="push_on_commit",
+            help="Disable push on commit for created components",
+        )
+        parser.add_argument(
+            "--push-on-commit",
+            action="store_true",
+            default=settings.DEFAULT_PUSH_ON_COMMIT,
+            dest="push_on_commit",
+            help="Enable push on commit for created components",
+        )
+        parser.add_argument(
+            "--main-component",
             default=None,
             help=(
-                'Define which component will be used as main - including full'
-                ' VCS repository'
-            )
-        ),
-    )
+                "Define which component will be used as main - including full"
+                " VCS repository"
+            ),
+        )
+        parser.add_argument(
+            "--source-language",
+            default=settings.DEFAULT_LANGUAGE,
+            help="Source language code",
+        )
+        parser.add_argument("project", help="Existing project slug")
+        parser.add_argument("repo", help="VCS repository URL")
+        parser.add_argument("branch", help="VCS repository branch")
+        parser.add_argument("filemask", help="File mask")
 
     def __init__(self, *args, **kwargs):
-        super(Command, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.filemask = None
         self.component_re = None
         self.file_format = None
         self.language_regex = None
         self.license = None
-        self.license_url = None
         self.main_component = None
         self.name_template = None
+        self.source_language = None
         self.base_file_template = None
+        self.new_base_template = None
         self.vcs = None
+        self.push_url = None
         self.logger = LOGGER
-        self._mask_regexp = None
-
-    def format_string(self, template, match):
-        '''
-        Formats template string with match.
-        '''
-        if '%s' in template:
-            return template % match
-        return template
-
-    def get_name(self, path):
-        """
-        Returns file name from patch based on filemask.
-        """
-        matches = self.match_regexp.match(path)
-        if matches is None:
-            self.logger.warning('Skipping %s', path)
-            return None
-        return matches.group('name')
-
-    @property
-    def match_regexp(self):
-        '''
-        Returns regexp for file matching
-        '''
-        if self.component_re is not None:
-            return self.component_re
-        if self._mask_regexp is None:
-            match = fnmatch.translate(self.filemask)
-            match = match.replace('.*.*', '(?P<name>.*)')
-            self._mask_regexp = re.compile(match)
-        return self._mask_regexp
+        self.push_on_commit = True
+        self.discovery = None
 
     def checkout_tmp(self, project, repo, branch):
-        '''
-        Checkouts project to temporary location.
-        '''
+        """Checkout project to temporary location."""
         # Create temporary working dir
-        workdir = tempfile.mkdtemp(dir=project.get_path())
-        os.chmod(workdir, 0o755)
+        workdir = tempfile.mkdtemp(dir=project.full_path)
+        # Make the temporary directory readable by others
+        os.chmod(workdir, 0o755)  # nosec
 
         # Initialize git repository
-        self.logger.info('Cloning git repository...')
-        gitrepo = GitRepository.clone(repo, workdir)
-        self.logger.info('Updating working copy in git repository...')
-        gitrepo.configure_branch(branch)
+        self.logger.info("Cloning git repository...")
+        try:
+            gitrepo = VCS_REGISTRY[self.vcs].clone(repo, workdir, branch)
+        except RepositoryException as error:
+            raise CommandError(f"Failed clone: {error}")
+        self.logger.info("Updating working copy in git repository...")
+        with gitrepo.lock:
+            gitrepo.configure_branch(branch)
 
         return workdir
 
-    def get_matching_files(self, repo):
-        '''
-        Returns relative path of matched files.
-        '''
-        matches = glob(os.path.join(repo, self.filemask))
-        return [f.replace(repo, '').strip('/') for f in matches]
-
-    def get_matching_subprojects(self, repo):
-        '''
-        Scan the master repository for names matching our mask
-        '''
-        # Find matching files
-        matches = self.get_matching_files(repo)
-        self.logger.info('Found %d matching files', len(matches))
-
-        # Parse subproject names out of them
-        names = set()
-        for match in matches:
-            name = self.get_name(match)
-            if name:
-                names.add(name)
-        self.logger.info('Found %d subprojects', len(names))
-        return sorted(names)
-
-    def find_usable_slug(self, name, slug_len, project):
-        base = name[:slug_len - 4]
-        for i in range(1, 1000):
-            newname = '{0} {1:03d}'.format(base, i)
-            slug = slugify(newname)
-            subprojects = SubProject.objects.filter(
-                Q(name=newname) | Q(slug=slug),
-                project=project
+    def parse_options(self, repo, options):
+        """Parse parameters."""
+        self.filemask = options["filemask"]
+        self.vcs = options["vcs"]
+        if options["push_url_same"]:
+            self.push_url = repo
+        else:
+            self.push_url = options["push_url"]
+        self.file_format = options["file_format"]
+        self.language_regex = options["language_regex"]
+        self.main_component = options["main_component"]
+        self.name_template = options["name_template"]
+        self.source_language = Language.objects.get(code=options["source_language"])
+        if "%s" in self.name_template:
+            self.name_template = self.name_template.replace("%s", "{{ component }}")
+        self.license = options["license"]
+        self.push_on_commit = options["push_on_commit"]
+        self.base_file_template = options["base_file_template"]
+        self.new_base_template = options["new_base_template"]
+        if "%s" in self.base_file_template:
+            self.base_file_template = self.base_file_template.replace(
+                "%s", "{{ component }}"
             )
-            if not subprojects.exists():
-                return newname, slug
-        raise CommandError(
-            'Failed to find suitable name for {0}'.format(name)
-        )
-
-    def parse_options(self, args, options):
-        """Parses parameters"""
-        self.filemask = args[3]
-        self.vcs = options['vcs']
-        self.file_format = options['file_format']
-        self.language_regex = options['language_regex']
-        self.main_component = options['main_component']
-        self.name_template = options['name_template']
-        self.license = options['license']
-        self.license_url = options['license_url']
-        self.base_file_template = options['base_file_template']
-        if options['component_regexp']:
-            try:
-                self.component_re = re.compile(
-                    options['component_regexp'],
-                    re.MULTILINE | re.DOTALL
-                )
-            except re.error as error:
-                raise CommandError(
-                    'Failed to compile regullar expression "{0}": {1}'.format(
-                        options['component_regexp'], error
-                    )
-                )
-            if 'name' not in self.component_re.groupindex:
-                raise CommandError(
-                    'Component regullar expression lacks named group "name"'
-                )
 
         # Is file format supported?
         if self.file_format not in FILE_FORMATS:
-            raise CommandError(
-                'Invalid file format: %s' % options['file_format']
-            )
+            raise CommandError("Invalid file format: {}".format(options["file_format"]))
+
+        # Is vcs supported?
+        if self.vcs not in VCS_REGISTRY:
+            raise CommandError("Invalid vcs: {}".format(options["vcs"]))
 
         # Do we have correct mask?
-        if '**' not in self.filemask:
-            raise CommandError(
-                'You need to specify double wildcard '
-                'for subproject part of the match!'
-            )
+        # - if there is **, then it's simple mask (it's invalid in regexp)
+        # - validate regexp otherwise
+        if "**" in self.filemask and "*" in self.filemask.replace("**", ""):
+            match = re.escape(self.filemask)
+            match = match.replace(r"\*\*", "(?P<component>[[WILDCARD]])", 1)
+            match = match.replace(r"\*\*", "(?P=component)")
+            match = match.replace(r"\*", "(?P<language>[[WILDCARD]])", 1)
+            match = match.replace(r"\*", "(?P=language)")
+            match = match.replace("[[WILDCARD]]", "[^/]*")
+            self.filemask = match
+        else:
+            try:
+                compiled = re.compile(self.filemask)
+            except re.error as error:
+                raise CommandError(
+                    f"Failed to compile regular expression {self.filemask!r}: {error}"
+                )
+            if (
+                "component" not in compiled.groupindex
+                or "language" not in compiled.groupindex
+            ):
+                raise CommandError(
+                    "Component regular expression lacks named group "
+                    '"component" and/or "language"'
+                )
 
     def handle(self, *args, **options):
-        '''
-        Automatic import of project.
-        '''
-        # Check params count
-        if len(args) != 4:
-            raise CommandError('Invalid number of parameters!')
-
+        """Automatic import of project."""
         # Read params
-        repo = args[1]
-        branch = args[2]
-        self.parse_options(args, options)
+        repo = options["repo"]
+        branch = options["branch"]
+        self.parse_options(repo, options)
 
         # Try to get project
         try:
-            project = Project.objects.get(slug=args[0])
+            project = Project.objects.get(slug=options["project"])
         except Project.DoesNotExist:
             raise CommandError(
-                'Project %s does not exist, you need to create it first!' %
-                args[0]
+                'Project "{}" not found, please create it first!'.format(
+                    options["project"]
+                )
             )
 
+        # Get or create main component
         if is_repo_link(repo):
-            sharedrepo = repo
             try:
-                sub_project = SubProject.objects.get(
-                    project=project,
-                    slug=repo.rsplit('/', 1)[-1]
-                )
-            except SubProject.DoesNotExist:
+                component = Component.objects.get_linked(repo)
+                # Avoid operating on link
+                if component.is_repo_link:
+                    component = component.linked_component
+            except Component.DoesNotExist:
                 raise CommandError(
-                    'SubProject %s does not exist, '
-                    'you need to create it first!' % repo
+                    f"Component {repo!r} not found, please create it first!"
                 )
-            matches = self.get_matching_subprojects(
-                sub_project.get_path(),
-            )
         else:
-            matches, sharedrepo = self.import_initial(project, repo, branch)
+            component = self.import_initial(project, repo, branch)
 
-        # We need to limit slug length to avoid problems with MySQL
-        # silent truncation
-        # pylint: disable=W0212
-        slug_len = SubProject._meta.get_field('slug').max_length
+        discovery = self.get_discovery(component)
+        discovery.perform()
 
-        # Create remaining subprojects sharing git repository
-        for match in matches:
-            name = self.format_string(self.name_template, match)
-            template = self.format_string(self.base_file_template, match)
-            slug = slugify(name)[:slug_len]
-            subprojects = SubProject.objects.filter(
-                Q(name=name) | Q(slug=slug),
-                project=project
+    def get_discovery(self, component, path=None):
+        """Return discovery object after doing basic sanity check."""
+        if self.discovery is not None:
+            self.discovery.component = component
+        else:
+            self.discovery = ComponentDiscovery(
+                component,
+                match=self.filemask,
+                name_template=self.name_template,
+                language_regex=self.language_regex,
+                base_file_template=self.base_file_template,
+                new_base_template=self.new_base_template,
+                file_format=self.file_format,
+                path=path,
             )
-            if subprojects.exists():
-                if not options['duplicates']:
-                    self.logger.warning(
-                        'Component %s already exists, skipping',
-                        name
-                    )
-                    continue
-                else:
-                    name, slug = self.find_usable_slug(
-                        name, slug_len, project
-                    )
-
-            self.logger.info('Creating component %s', name)
-            SubProject.objects.create(
-                name=name,
-                slug=slug,
-                project=project,
-                repo=sharedrepo,
-                branch=branch,
-                template=template,
-                filemask=self.filemask.replace('**', match),
-                **self.get_project_attribs()
+            self.logger.info(
+                "Found %d matching files", len(self.discovery.matched_files)
             )
 
-    def get_project_attribs(self):
-        result = {
-            'file_format': self.file_format,
-            'vcs': self.vcs,
+            if not self.discovery.matched_files:
+                raise CommandError("Your mask did not match any files!")
 
-        }
-        optionals = (
-            'license',
-            'license_url',
-            'language_regex'
-        )
-        for key in optionals:
-            value = getattr(self, key)
-            if value is not None:
-                result[key] = value
-        return result
+            self.logger.info(
+                "Found %d components", len(self.discovery.matched_components)
+            )
+            langs = set()
+            for match in self.discovery.matched_components.values():
+                langs.update(match["languages"])
+            self.logger.info("Found %d languages", len(langs))
+
+            # Do some basic sanity check on languages
+            if not Language.objects.filter(code__in=langs).exists():
+                raise CommandError(
+                    "None of matched languages exists, maybe you have "
+                    "mixed * and ** in the mask?"
+                )
+        return self.discovery
 
     def import_initial(self, project, repo, branch):
-        '''
-        Import the first repository of a project
-        '''
+        """Import the first repository of a project."""
         # Checkout git to temporary dir
         workdir = self.checkout_tmp(project, repo, branch)
-        matches = self.get_matching_subprojects(workdir)
+        # Create fake discovery without existing component
+        discovery = self.get_discovery(None, workdir)
 
-        # Create first subproject (this one will get full git repo)
+        components = project.component_set.all()
+
+        component = None
+
+        # Create first component (this one will get full git repo)
         if self.main_component:
-            if self.main_component not in matches:
+            match = None
+            for match in discovery.matched_components.values():
+                if match["slug"] == self.main_component:
+                    break
+            if match is None or match["slug"] != self.main_component:
                 raise CommandError(
-                    'Specified --main-component was not found in matches!'
+                    "Specified --main-component was not found in matches!"
                 )
-            match = force_text(self.main_component)
-            matches.remove(self.main_component)
         else:
-            match = matches.pop()
-        name = self.format_string(self.name_template, match)
-        template = self.format_string(self.base_file_template, match)
-        slug = slugify(name)
+            # Try if one is already there
+            for match in discovery.matched_components.values():
+                try:
+                    component = components.get(repo=repo, filemask=match["mask"])
+                except Component.DoesNotExist:
+                    continue
+            # Pick random
+            if component is None:
+                match = list(discovery.matched_components.values())[0]
 
-        if SubProject.objects.filter(project=project, slug=slug).exists():
+        try:
+            if component is None:
+                component = components.get(slug=match["slug"])
             self.logger.warning(
-                'Component %s already exists, skipping and using it '
-                'as main component',
-                name
+                "Component %s already exists, skipping and using it "
+                "as a main component",
+                match["slug"],
             )
-            shutil.rmtree(workdir)
-            return matches, 'weblate://%s/%s' % (project.slug, slug)
+            remove_tree(workdir)
+        except Component.DoesNotExist:
+            self.logger.info("Creating component %s as main one", match["slug"])
 
-        self.logger.info('Creating component %s as main one', name)
+            # Rename gitrepository to new name
+            os.rename(workdir, os.path.join(project.full_path, match["slug"]))
 
-        # Rename gitrepository to new name
-        os.rename(
-            workdir,
-            os.path.join(project.get_path(), slug)
-        )
+            # Create new component
+            component = discovery.create_component(
+                None,
+                match,
+                project=project,
+                source_language=self.source_language,
+                repo=repo,
+                branch=branch,
+                vcs=self.vcs,
+                push_on_commit=self.push_on_commit,
+                license=self.license,
+            )
 
-        SubProject.objects.create(
-            name=name,
-            slug=slug,
-            project=project,
-            repo=repo,
-            branch=branch,
-            template=template,
-            filemask=self.filemask.replace('**', match),
-            **self.get_project_attribs()
-        )
-
-        sharedrepo = 'weblate://%s/%s' % (project.slug, slug)
-
-        return matches, sharedrepo
+        return component

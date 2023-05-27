@@ -1,286 +1,449 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the PACKAGE package.
-# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
-#
+# Arif Budiman <arifpedia@gmail.com>, 2016.
+# Andika Triwidada <andika@gmail.com>, 2018, 2020.
+# Anonymous <noreply@weblate.org>, 2020.
+# Reza Almanda <rezaalmanda27@gmail.com>, 2021.
+# Linerly <linerly@protonmail.com>, 2021, 2023.
+# Taufik Adi Wicaksono <taufikadi.wicaksono@tutamail.com>, 2022, 2023.
 msgid ""
 msgstr ""
-"Project-Id-Version: Weblate 1.2\n"
-"Report-Msgid-Bugs-To: weblate@lists.cihar.com\n"
-"POT-Creation-Date: 2016-03-10 08:51+0000\n"
-"PO-Revision-Date: 2014-02-12 00:50+0200\n"
-"Last-Translator: Hascore Eleven <hascore@gmail.com>\n"
-"Language-Team: Indonesian <http://hosted.weblate.org/projects/weblate/"
+"Project-Id-Version: Weblate 4.17\n"
+"Report-Msgid-Bugs-To: https://github.com/WeblateOrg/weblate/issues\n"
+"POT-Creation-Date: 2023-04-14 14:37+0000\n"
+"PO-Revision-Date: 2023-05-24 15:44+0000\n"
+"Last-Translator: Taufik Adi Wicaksono <taufikadi.wicaksono@tutamail.com>\n"
+"Language-Team: Indonesian <https://hosted.weblate.org/projects/weblate/"
 "javascript/id/>\n"
 "Language: id\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
-"X-Generator: Weblate 1.9-dev\n"
+"X-Generator: Weblate 4.18-dev\n"
 
-#: weblate/static/loader-bootstrap.js:195
-msgid "Copy"
-msgstr "Salin"
+#: weblate/static/editor/base.js:94
+msgid "Please select target plural by clicking."
+msgstr "Silakan pilih target jamak dengan mengeklik."
 
-#: weblate/static/loader-bootstrap.js:200
-msgid "Copy and save"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:242
+#: weblate/static/editor/base.js:174
 #, javascript-format
-msgid "Alt+M then %s"
-msgstr ""
+msgid "Cmd+%s"
+msgstr "Cmd+%s"
 
-#: weblate/static/loader-bootstrap.js:261
+#: weblate/static/editor/base.js:176
+#, javascript-format
+msgid "Ctrl+%s"
+msgstr "Ctrl+%s"
+
+#: weblate/static/editor/full.js:261
+msgid "Translation memory entry removed."
+msgstr "Entri memori terjemahan telah dihapus."
+
+#: weblate/static/editor/full.js:294
+msgid "The request for machine translation has failed:"
+msgstr "Permintaan untuk terjemahan mesin telah gagal:"
+
+#: weblate/static/editor/full.js:307
 #, javascript-format
 msgid "The request for machine translation using %s has failed:"
-msgstr "Permintaan untuk mesin penerjemahan menggunakan %s telah gagal:"
+msgstr "Permintaan terjemahan mesin menggunakan %s telah gagal:"
 
-#: weblate/static/loader-bootstrap.js:273
-msgid "The request for machine translation has failed:"
-msgstr "Permintaan untuk mesin penerjemahan telah gagal:"
+#: weblate/static/editor/full.js:342
+#, javascript-format
+msgid "Cmd+M then %s"
+msgstr "Cmd+M lalu %s"
 
-#: weblate/static/loader-bootstrap.js:334
+#: weblate/static/editor/full.js:344
+#, javascript-format
+msgid "Ctrl+M then %s"
+msgstr "Ctrl+M lalu %s"
+
+#: weblate/static/editor/full.js:446
+#, javascript-format
+msgid "Press Cmd+I then %s to dismiss this."
+msgstr "Tekan Cmd+I kemudian %s untuk mengabaikan ini."
+
+#: weblate/static/editor/full.js:451
+#, javascript-format
+msgid "Press Ctrl+I then %s to dismiss this."
+msgstr "Tekan Ctrl+I kemudian %s untuk menutup ini."
+
+#: weblate/static/editor/full.js:590
+msgid "Clone to translation"
+msgstr "Gandakan ke terjemahan"
+
+#: weblate/static/editor/full.js:596
+msgid "Accept"
+msgstr "Setuju"
+
+#: weblate/static/editor/full.js:607
+msgid "Delete entry"
+msgstr "Hapus entri"
+
+#: weblate/static/editor/zen.js:105
+msgid "There are some unsaved changes, are you sure you want to leave?"
+msgstr "Ada beberapa perubahan yang belum disimpan, Anda yakin ingin keluar?"
+
+#: weblate/static/loader-bootstrap.js:171
+msgid "Error loading search results!"
+msgstr "Terjadi kesalahan saat memuat hasil penelusuran!"
+
+#: weblate/static/loader-bootstrap.js:175
+msgid "No new matching source strings found."
+msgstr "Tidak menemukan string sumber baru yang cocok."
+
+#: weblate/static/loader-bootstrap.js:245
 msgid "Sort this column"
-msgstr "Menyortir kolom ini"
+msgstr "Urutkan kolom ini"
 
-#: weblate/static/loader-bootstrap.js:421
+#: weblate/static/loader-bootstrap.js:484
 msgid "Error while loading page:"
-msgstr ""
+msgstr "Galat ketika memuat laman:"
+
+#: weblate/static/loader-bootstrap.js:645
+#: weblate/static/loader-bootstrap.js:652
+msgid "Sunday"
+msgstr "Minggu"
+
+#: weblate/static/loader-bootstrap.js:646
+msgid "Monday"
+msgstr "Senin"
+
+#: weblate/static/loader-bootstrap.js:647
+msgid "Tuesday"
+msgstr "Selasa"
+
+#: weblate/static/loader-bootstrap.js:648
+msgid "Wednesday"
+msgstr "Rabu"
+
+#: weblate/static/loader-bootstrap.js:649
+msgid "Thursday"
+msgstr "Kamis"
+
+#: weblate/static/loader-bootstrap.js:650
+msgid "Friday"
+msgstr "Jumat"
+
+#: weblate/static/loader-bootstrap.js:651
+msgid "Saturday"
+msgstr "Sabtu"
+
+#: weblate/static/loader-bootstrap.js:655
+#: weblate/static/loader-bootstrap.js:662
+msgctxt "Short (for example three letter) name of day in week"
+msgid "Sun"
+msgstr "Min"
+
+#: weblate/static/loader-bootstrap.js:656
+msgctxt "Short (for example three letter) name of day in week"
+msgid "Mon"
+msgstr "Sen"
+
+#: weblate/static/loader-bootstrap.js:657
+msgctxt "Short (for example three letter) name of day in week"
+msgid "Tue"
+msgstr "Sel"
+
+#: weblate/static/loader-bootstrap.js:658
+msgctxt "Short (for example three letter) name of day in week"
+msgid "Wed"
+msgstr "Rab"
+
+#: weblate/static/loader-bootstrap.js:659
+msgctxt "Short (for example three letter) name of day in week"
+msgid "Thu"
+msgstr "Kam"
+
+#: weblate/static/loader-bootstrap.js:660
+msgctxt "Short (for example three letter) name of day in week"
+msgid "Fri"
+msgstr "Jum"
+
+#: weblate/static/loader-bootstrap.js:661
+msgctxt "Short (for example three letter) name of day in week"
+msgid "Sat"
+msgstr "Sab"
+
+#: weblate/static/loader-bootstrap.js:665
+#: weblate/static/loader-bootstrap.js:672
+msgctxt "Minimal (for example two letter) name of day in week"
+msgid "Su"
+msgstr "Mn"
+
+#: weblate/static/loader-bootstrap.js:666
+msgctxt "Minimal (for example two letter) name of day in week"
+msgid "Mo"
+msgstr "Sn"
+
+#: weblate/static/loader-bootstrap.js:667
+msgctxt "Minimal (for example two letter) name of day in week"
+msgid "Tu"
+msgstr "Sl"
+
+#: weblate/static/loader-bootstrap.js:668
+msgctxt "Minimal (for example two letter) name of day in week"
+msgid "We"
+msgstr "Rb"
+
+#: weblate/static/loader-bootstrap.js:669
+msgctxt "Minimal (for example two letter) name of day in week"
+msgid "Th"
+msgstr "Km"
+
+#: weblate/static/loader-bootstrap.js:670
+msgctxt "Minimal (for example two letter) name of day in week"
+msgid "Fr"
+msgstr "Jm"
+
+#: weblate/static/loader-bootstrap.js:671
+msgctxt "Minimal (for example two letter) name of day in week"
+msgid "Sa"
+msgstr "Sb"
+
+#: weblate/static/loader-bootstrap.js:675
+msgid "January"
+msgstr "Januari"
+
+#: weblate/static/loader-bootstrap.js:676
+msgid "February"
+msgstr "Februari"
+
+#: weblate/static/loader-bootstrap.js:677
+msgid "March"
+msgstr "Maret"
+
+#: weblate/static/loader-bootstrap.js:678
+msgid "April"
+msgstr "April"
+
+#: weblate/static/loader-bootstrap.js:679
+msgid "May"
+msgstr "Mei"
 
 #: weblate/static/loader-bootstrap.js:680
-#, javascript-format
-msgid "Alt+%s"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:824
-msgid "There are some unsaved changes, are you sure you want to leave?"
-msgstr ""
-"Ada beberapa perubahan yang belum disimpan, Apakah Anda yakin ingin "
-"meninggalkan?"
-
-#: weblate/static/loader-bootstrap.js:840
-#: weblate/static/loader-bootstrap.js:842
-msgid "Sunday"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:840
-msgid "Monday"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:840
-msgid "Tuesday"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:841
-msgid "Wednesday"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:841
-msgid "Thursday"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:841
-msgid "Friday"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:842
-msgid "Saturday"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:845
-#: weblate/static/loader-bootstrap.js:852
-msgctxt "Short (eg. three letter) name of day in week"
-msgid "Sun"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:846
-msgctxt "Short (eg. three letter) name of day in week"
-msgid "Mon"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:847
-msgctxt "Short (eg. three letter) name of day in week"
-msgid "Tue"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:848
-msgctxt "Short (eg. three letter) name of day in week"
-msgid "Wed"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:849
-msgctxt "Short (eg. three letter) name of day in week"
-msgid "Thu"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:850
-msgctxt "Short (eg. three letter) name of day in week"
-msgid "Fri"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:851
-msgctxt "Short (eg. three letter) name of day in week"
-msgid "Sat"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:855
-#: weblate/static/loader-bootstrap.js:862
-msgctxt "Minimal (eg. two letter) name of day in week"
-msgid "Su"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:856
-msgctxt "Minimal (eg. two letter) name of day in week"
-msgid "Mo"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:857
-msgctxt "Minimal (eg. two letter) name of day in week"
-msgid "Tu"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:858
-msgctxt "Minimal (eg. two letter) name of day in week"
-msgid "We"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:859
-msgctxt "Minimal (eg. two letter) name of day in week"
-msgid "Th"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:860
-msgctxt "Minimal (eg. two letter) name of day in week"
-msgid "Fr"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:861
-msgctxt "Minimal (eg. two letter) name of day in week"
-msgid "Sa"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:865
-msgid "January"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:865
-msgid "February"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:865
-msgid "March"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:866
-msgid "April"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:866
-msgid "May"
-msgstr ""
-
-#: weblate/static/loader-bootstrap.js:866
 msgid "June"
-msgstr ""
+msgstr "Juni"
 
-#: weblate/static/loader-bootstrap.js:866
+#: weblate/static/loader-bootstrap.js:681
 msgid "July"
-msgstr ""
+msgstr "Juli"
 
-#: weblate/static/loader-bootstrap.js:867
+#: weblate/static/loader-bootstrap.js:682
 msgid "August"
-msgstr ""
+msgstr "Agustus"
 
-#: weblate/static/loader-bootstrap.js:867
+#: weblate/static/loader-bootstrap.js:683
 msgid "September"
-msgstr ""
+msgstr "September"
 
-#: weblate/static/loader-bootstrap.js:867
+#: weblate/static/loader-bootstrap.js:684
 msgid "October"
-msgstr ""
+msgstr "Oktober"
 
-#: weblate/static/loader-bootstrap.js:868
+#: weblate/static/loader-bootstrap.js:685
 msgid "November"
-msgstr ""
+msgstr "November"
 
-#: weblate/static/loader-bootstrap.js:868
+#: weblate/static/loader-bootstrap.js:686
 msgid "December"
-msgstr ""
+msgstr "Desember"
 
-#: weblate/static/loader-bootstrap.js:871
+#: weblate/static/loader-bootstrap.js:689
 msgctxt "Short name of month"
 msgid "Jan"
-msgstr ""
+msgstr "Jan"
 
-#: weblate/static/loader-bootstrap.js:872
+#: weblate/static/loader-bootstrap.js:690
 msgctxt "Short name of month"
 msgid "Feb"
-msgstr ""
+msgstr "Feb"
 
-#: weblate/static/loader-bootstrap.js:873
+#: weblate/static/loader-bootstrap.js:691
 msgctxt "Short name of month"
 msgid "Mar"
-msgstr ""
+msgstr "Mar"
 
-#: weblate/static/loader-bootstrap.js:874
+#: weblate/static/loader-bootstrap.js:692
 msgctxt "Short name of month"
 msgid "Apr"
-msgstr ""
+msgstr "Apr"
 
-#: weblate/static/loader-bootstrap.js:875
+#: weblate/static/loader-bootstrap.js:693
 msgctxt "Short name of month"
 msgid "May"
-msgstr ""
+msgstr "Mei"
 
-#: weblate/static/loader-bootstrap.js:876
+#: weblate/static/loader-bootstrap.js:694
 msgctxt "Short name of month"
 msgid "Jun"
-msgstr ""
+msgstr "Jun"
 
-#: weblate/static/loader-bootstrap.js:877
+#: weblate/static/loader-bootstrap.js:695
 msgctxt "Short name of month"
 msgid "Jul"
-msgstr ""
+msgstr "Jul"
 
-#: weblate/static/loader-bootstrap.js:878
+#: weblate/static/loader-bootstrap.js:696
 msgctxt "Short name of month"
 msgid "Aug"
-msgstr ""
+msgstr "Agu"
 
-#: weblate/static/loader-bootstrap.js:879
+#: weblate/static/loader-bootstrap.js:697
 msgctxt "Short name of month"
 msgid "Sep"
-msgstr ""
+msgstr "Sep"
 
-#: weblate/static/loader-bootstrap.js:880
+#: weblate/static/loader-bootstrap.js:698
 msgctxt "Short name of month"
 msgid "Oct"
-msgstr ""
+msgstr "Okt"
 
-#: weblate/static/loader-bootstrap.js:881
+#: weblate/static/loader-bootstrap.js:699
 msgctxt "Short name of month"
 msgid "Nov"
-msgstr ""
+msgstr "Nov"
 
-#: weblate/static/loader-bootstrap.js:882
+#: weblate/static/loader-bootstrap.js:700
 msgctxt "Short name of month"
 msgid "Dec"
-msgstr ""
+msgstr "Des"
 
-#: weblate/static/loader-bootstrap.js:884
+#: weblate/static/loader-bootstrap.js:702
 msgid "Today"
-msgstr ""
+msgstr "Hari ini"
 
-#: weblate/static/loader-bootstrap.js:885
+#: weblate/static/loader-bootstrap.js:703
 msgid "Clear"
-msgstr ""
+msgstr "Bersih"
 
-#: weblate/static/loader-bootstrap.js:919
-#, javascript-format
-msgid "Alt+I then %s"
+#: weblate/static/loader-bootstrap.js:835
+msgid "Text copied to clipboard."
+msgstr "Disalin ke papan klip."
+
+#: weblate/static/loader-bootstrap.js:839
+msgid "Please press Ctrl+C to copy."
+msgstr "Tekan Ctrl+C untuk menyalin."
+
+#: weblate/static/loader-bootstrap.js:863
+msgid "Search…"
+msgstr "Cari…"
+
+#: weblate/static/loader-bootstrap.js:864
+msgid "Available:"
+msgstr "Tersedia:"
+
+#: weblate/static/loader-bootstrap.js:865
+msgid "Chosen:"
+msgstr "Dipilih:"
+
+#: weblate/static/loader-bootstrap.js:1130
+msgid "Weblate is now scanning the repository, please be patient."
+msgstr "Weblate sedang memindai repositori, harap bersabar."
+
+#: weblate/static/loader-bootstrap.js:1225
+msgctxt "Alert to user when opening browser developer console"
+msgid "Stop!"
+msgstr "Hentikan!"
+
+#: weblate/static/loader-bootstrap.js:1231
+msgid ""
+"This is a browser feature intended for developers. If someone told you to "
+"copy-paste something here, they are likely trying to compromise your Weblate "
+"account."
 msgstr ""
+"Ini adalah fitur peramban yang ditujukan untuk pengembang. Jika seseorang "
+"meminta Anda untuk menyalin lalu menempelkan sesuatu di sini, kemungkinan "
+"besar mereka sedang mencoba untuk menyusup ke akun Weblate Anda."
+
+#: weblate/static/loader-bootstrap.js:1238
+msgid "See https://en.wikipedia.org/wiki/Self-XSS for more information."
+msgstr ""
+"Lihat https://en.wikipedia.org/wiki/Self-XSS untuk informasi lebih lanjut."
+
+#: weblate/static/zammad.js:7
+msgid "Weblate feedback"
+msgstr "Umpan balik Weblate"
+
+#: weblate/static/zammad.js:8
+msgid "Get help"
+msgstr "Dapatkan Bantuan"
+
+#: weblate/static/zammad.js:10
+#, javascript-format
+msgid ""
+"Thank you for your inquiry (#%s)! We'll contact you as soon as possible."
+msgstr ""
+"Terima kasih atas pertanyaan Anda (# %s)! Kami akan menghubungi Anda "
+"secepatnya."
+
+#: weblate/static/zammad.js:17
+msgid "Subject"
+msgstr "Subjek"
+
+#: weblate/static/zammad.js:25
+msgid "Your name"
+msgstr "Nama Anda"
+
+#: weblate/static/zammad.js:33
+msgid "Your e-mail"
+msgstr "Surel Anda"
+
+#: weblate/static/zammad.js:41
+msgid "Message"
+msgstr "Pesan"
+
+#: weblate/static/zammad.js:45
+msgid ""
+"Please contact us in English, otherwise we might be unable to process your "
+"request."
+msgstr ""
+"Silakan hubungi kami dalam Bahasa Inggris. Jika tidak, kami mungkin tidak "
+"dapat menindaklanjuti permintaan Anda."
+
+#: weblate/static/zammad.js:51
+msgid "Attachments"
+msgstr "Lampiran"
+
+#~ msgid "Copy"
+#~ msgstr "Salin"
+
+#~ msgid "Copy and save"
+#~ msgstr "Salin dan simpan"
+
+#~ msgid "Add to screenshot"
+#~ msgstr "Tambah ke tangkapan layar"
+
+#~ msgid "Ctrl/Command+%s"
+#~ msgstr "Ctrl/Command+%s"
+
+#~ msgid "Ctrl+I then %s"
+#~ msgstr "Ctrl+I lalu %s"
+
+#~ msgid "Copied"
+#~ msgstr "Disalin"
+
+#~ msgid "Selected:"
+#~ msgstr "Terpilih:"
+
+#~ msgid "Alt+%s"
+#~ msgstr "Alt+%s"
+
+#, fuzzy
+#~| msgid "Available:"
+#~ msgid "Available %s"
+#~ msgstr "Tersedia:"
+
+#, fuzzy
+#~| msgctxt "Short name of month"
+#~| msgid "Nov"
+#~ msgid "Now"
+#~ msgstr "Nov"
+
+#~ msgid "Cancel"
+#~ msgstr "Batal"
 
 #~ msgid "Strings with any failing checks"
 #~ msgstr "String dengan pemeriksaan yang gagal"
@@ -294,9 +457,6 @@ msgstr ""
 #~ msgid "Ok"
 #~ msgstr "Oke"
 
-#~ msgid "Cancel"
-#~ msgstr "Batal"
-
 #~ msgid "AJAX request to load this content has failed!"
 #~ msgstr "Permintaan AJAX untuk memuat konten ini gagal!"
 
@@ -308,9 +468,6 @@ msgstr ""
 
 #~ msgid "Resetting the repository will throw away all local changes!"
 #~ msgstr "Tata ulang repositori akan membuang semua perubahan lokal!"
-
-#~ msgid "Failed translation"
-#~ msgstr "Terjemahan gagal"
 
 #~ msgid "Error details:"
 #~ msgstr "Rincian galat:"

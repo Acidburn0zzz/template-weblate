@@ -1,123 +1,144 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 #
 # Django settings for running testsuite
 #
 
-from weblate.settings_example import *
 import os
+import warnings
 
-if 'CI_DATABASE' in os.environ:
-    if os.environ['CI_DATABASE'] == 'mysql':
-        DATABASES['default']['ENGINE'] = 'django.db.backends.mysql'
-        DATABASES['default']['NAME'] = 'weblate'
-        DATABASES['default']['USER'] = 'root'
-        DATABASES['default']['PASSWORD'] = ''
-        DATABASES['default']['OPTIONS'] = {
-            'init_command': 'SET NAMES utf8, wait_timeout=28800',
-        }
-    elif os.environ['CI_DATABASE'] == 'postgresql':
-        DATABASES['default']['ENGINE'] = \
-            'django.db.backends.postgresql_psycopg2'
-        DATABASES['default']['NAME'] = 'weblate'
-        DATABASES['default']['USER'] = 'postgres'
-        DATABASES['default']['PASSWORD'] = ''
+from weblate.settings_example import *  # noqa: F403
 
+CI_DATABASE = os.environ.get("CI_DATABASE", "")
+
+default_user = "weblate"
+default_name = "weblate"
+if CI_DATABASE in ("mysql", "mariadb"):
+    DATABASES["default"]["ENGINE"] = "django.db.backends.mysql"
+    default_user = "root"
+    DATABASES["default"]["OPTIONS"] = {
+        "init_command": (
+            "SET NAMES utf8mb4, "
+            "wait_timeout=28800, "
+            "default_storage_engine=INNODB, "
+            'sql_mode="STRICT_TRANS_TABLES"'
+        ),
+        "charset": "utf8",
+        "isolation_level": "read committed",
+    }
+elif CI_DATABASE == "postgresql":
+    DATABASES["default"]["ENGINE"] = "django.db.backends.postgresql"
+    default_user = "postgres"
+else:
+    raise ValueError(f"Not supported database: {CI_DATABASE}")
+
+DATABASES["default"]["HOST"] = os.environ.get("CI_DB_HOST", "")
+DATABASES["default"]["NAME"] = os.environ.get("CI_DB_NAME", default_name)
+DATABASES["default"]["USER"] = os.environ.get("CI_DB_USER", default_user)
+DATABASES["default"]["PASSWORD"] = os.environ.get("CI_DB_PASSWORD", "")
+DATABASES["default"]["PORT"] = os.environ.get("CI_DB_PORT", "")
 
 # Configure admins
-ADMINS = (('Weblate test', 'noreply@weblate.org'), )
+ADMINS = (("Weblate test", "noreply@weblate.org"),)
+
+# The secret key is needed for tests
+SECRET_KEY = "secret key used for tests only"
+
+SITE_DOMAIN = "example.com"
 
 # Different root for test repos
-DATA_DIR = os.path.join(BASE_DIR, '..', 'data-test')
+if "CI_BASE_DIR" in os.environ:
+    BASE_DIR = os.environ["CI_BASE_DIR"]
+else:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data-test")
+CACHE_DIR = os.path.join(DATA_DIR, "cache")
+MEDIA_ROOT = os.path.join(DATA_DIR, "media")
+STATIC_ROOT = os.path.join(DATA_DIR, "static")
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_BROKER_URL = "memory://"
+CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_RESULT_BACKEND = None
 
-# Fake access to Microsoft Translator
-MT_MICROSOFT_ID = 'ID'
-MT_MICROSOFT_SECRET = 'SECRET'
+VCS_API_DELAY = 0
 
-# Fake Google translate API key
-MT_GOOGLE_KEY = 'KEY'
+# Localize CDN addon
+LOCALIZE_CDN_URL = "https://cdn.example.com/"
+LOCALIZE_CDN_PATH = os.path.join(DATA_DIR, "l10n-cdn")
 
-# To get higher limit for testing
-MT_MYMEMORY_EMAIL = 'test@weblate.org'
-
-# Enable some machine translations
-MACHINE_TRANSLATION_SERVICES = (
-    'weblate.trans.machine.microsoft.MicrosoftTranslation',
-    'weblate.trans.machine.dummy.DummyTranslation',
-)
+# Needed for makemessages, otherwise it does not discover all available locales
+# and the -a parameter does not work
+LOCALE_PATHS = [os.path.join(os.path.dirname(__file__), "locale")]
 
 # Silent logging setup
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'filters': {
-        'require_debug_false': {
-            '()': 'django.utils.log.RequireDebugFalse'
-        }
-    },
-    'handlers': {
-        'mail_admins': {
-            'level': 'ERROR',
-            'filters': ['require_debug_false'],
-            'class': 'django.utils.log.AdminEmailHandler'
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {"require_debug_false": {"()": "django.utils.log.RequireDebugFalse"}},
+    "formatters": {"simple": {"format": "%(levelname)s %(message)s"}},
+    "handlers": {
+        "mail_admins": {
+            "level": "ERROR",
+            "filters": ["require_debug_false"],
+            "class": "django.utils.log.AdminEmailHandler",
+        },
+        "console": {
+            "level": "DEBUG",
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
         },
     },
-    'loggers': {
-        'django.request': {
-            'handlers': ['mail_admins'],
-            'level': 'ERROR',
-            'propagate': True,
+    "loggers": {
+        "django.request": {
+            "handlers": ["mail_admins"],
+            "level": "ERROR",
+            "propagate": True,
         },
-        'weblate': {
-            'handlers': [],
-            'level': 'ERROR',
-        }
-    }
+        "weblate": {"handlers": [], "level": "ERROR"},
+        "social": {"handlers": [], "level": "ERROR"},
+    },
 }
+
+# Reset caches
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
+if "CI_REDIS_HOST" in os.environ:
+    CACHES["avatar"] = {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://{}:{}/0".format(
+            os.environ["CI_REDIS_HOST"], os.environ.get("CI_REDIS_PORT", "6379")
+        ),
+    }
 
 # Selenium can not clear HttpOnly cookies in MSIE
 SESSION_COOKIE_HTTPONLY = False
 
-# Test billing app as well
-INSTALLED_APPS += (
-    'weblate.billing',
-)
+# Use database backed sessions for transaction consistency in tests
+SESSION_ENGINE = "django.contrib.sessions.backends.db"
+
+# Test optional apps as well
+INSTALLED_APPS += ("weblate.billing", "weblate.legal")
 
 # Test GitHub auth
 AUTHENTICATION_BACKENDS = (
-    'weblate.accounts.auth.EmailAuth',
-    'social.backends.github.GithubOAuth2',
-    'weblate.accounts.auth.WeblateUserBackend',
+    "social_core.backends.email.EmailAuth",
+    "social_core.backends.github.GithubOAuth2",
+    "weblate.accounts.auth.WeblateUserBackend",
 )
 
+# Disable random admin checks trigger
+BACKGROUND_ADMIN_CHECKS = False
 
-class DisableMigrations(object):
-    """Magic to disable migrations"""
-    def __contains__(self, item):
-        return True
+warnings.filterwarnings(
+    "error",
+    r"DateTimeField .* received a naive datetime",
+    RuntimeWarning,
+    r"django\.db\.models\.fields",
+)
 
-    def __getitem__(self, item):
-        return "notmigrations"
-
-
-# Avoid running migrations in testsuite
-if 'TEST_MIGRATIONS' not in os.environ:
-    MIGRATION_MODULES = DisableMigrations()
+# Generate junit compatible XML for AppVeyor
+if "APPVEYOR" in os.environ:
+    TEST_RUNNER = "xmlrunner.extra.djangotestrunner.XMLTestRunner"
+    TEST_OUTPUT_FILE_NAME = "junit.xml"

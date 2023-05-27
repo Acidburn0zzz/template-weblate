@@ -1,944 +1,1175 @@
-var loading = 0;
-var machineTranslationLoaded = false;
-var activityDataLoaded = false;
+// Copyright © Michal Čihař <michal@weblate.org>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
 
-if (window.location.hash && window.location.hash.indexOf("=") > -1) {
-    window.location.hash = '';
+var loading = [];
+
+// Remove some weird things from location hash
+if (
+  window.location.hash &&
+  (window.location.hash.indexOf('"') > -1 ||
+    window.location.hash.indexOf("=") > -1)
+) {
+  window.location.hash = "";
 }
 
 // Loading indicator handler
 function increaseLoading(sel) {
-    if (loading === 0) {
-        $(sel).show();
-    }
-    loading = loading + 1;
+  if (!(sel in loading)) {
+    loading[sel] = 0;
+  }
+  if (loading[sel] === 0) {
+    $("#loading-" + sel).show();
+  }
+  loading[sel] += 1;
 }
 
 function decreaseLoading(sel) {
-    loading = loading - 1;
-    if (loading === 0) {
-        $(sel).hide();
-    }
+  loading[sel] -= 1;
+  if (loading[sel] === 0) {
+    $("#loading-" + sel).hide();
+  }
 }
 
-function getNumericKey(idx) {
-    var ret = idx + 1;
-    if (ret == 10) {
-        return '0';
+function addAlert(message, kind = "danger", delay = 3000) {
+  var alerts = $("#popup-alerts");
+  var e = $(
+    '<div class="alert alert-dismissible" role="alert"><button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button></div>',
+  );
+  e.addClass("alert-" + kind);
+  e.append(new Text(message));
+  e.hide();
+  alerts.show().append(e);
+  e.slideDown(200);
+  e.on("closed.bs.alert", function () {
+    if (alerts.find(".alert").length == 0) {
+      alerts.hide();
     }
-    return ret;
+  });
+  if (delay) {
+    e.delay(delay).slideUp(200, function () {
+      $(this).alert("close");
+    });
+  }
 }
 
 jQuery.fn.extend({
-    insertAtCaret: function (myValue) {
-        return this.each(function (i) {
-            if (document.selection) {
-                // For browsers like Internet Explorer
-                this.focus();
-                var sel = document.selection.createRange();
-                sel.text = myValue;
-                this.focus();
-            } else if (this.selectionStart || this.selectionStart === 0) {
-                //For browsers like Firefox and Webkit based
-                var startPos = this.selectionStart;
-                var endPos = this.selectionEnd;
-                var scrollTop = this.scrollTop;
-                this.value = this.value.substring(0, startPos) + myValue + this.value.substring(endPos, this.value.length);
-                this.focus();
-                this.selectionStart = startPos + myValue.length;
-                this.selectionEnd = startPos + myValue.length;
-                this.scrollTop = scrollTop;
-            } else {
-                this.value += myValue;
-                this.focus();
-            }
-        });
-    }
+  insertAtCaret: function (myValue) {
+    return this.each(function () {
+      if (document.selection) {
+        // For browsers like Internet Explorer
+        this.focus();
+        let sel = document.selection.createRange();
+
+        sel.text = myValue;
+        this.focus();
+      } else if (this.selectionStart || this.selectionStart === 0) {
+        //For browsers like Firefox and Webkit based
+        let startPos = this.selectionStart;
+        let endPos = this.selectionEnd;
+        let scrollTop = this.scrollTop;
+
+        this.value =
+          this.value.substring(0, startPos) +
+          myValue +
+          this.value.substring(endPos, this.value.length);
+        this.focus();
+        this.selectionStart = startPos + myValue.length;
+        this.selectionEnd = startPos + myValue.length;
+        this.scrollTop = scrollTop;
+      } else {
+        this.value += myValue;
+        this.focus();
+      }
+      // Need `bubbles` because some event listeners (like this
+      // https://github.com/WeblateOrg/weblate/blob/86d4fb308c9941f32b48f007e16e8c153b0f3fd7/weblate/static/editor/base.js#L50
+      // ) are attached to the parent elements.
+      this.dispatchEvent(new Event("input", { bubbles: true }));
+      this.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  },
+
+  replaceValue: function (myValue) {
+    return this.each(function () {
+      this.value = myValue;
+      // Need `bubbles` because some event listeners (like this
+      // https://github.com/WeblateOrg/weblate/blob/86d4fb308c9941f32b48f007e16e8c153b0f3fd7/weblate/static/editor/base.js#L50
+      // ) are attached to the parent elements.
+      this.dispatchEvent(new Event("input", { bubbles: true }));
+      this.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  },
 });
 
+function submitForm(evt, combo, selector) {
+  var $target = $(evt.target);
+  var $form = $target.closest("form");
 
-function submitForm(evt) {
-    var $target = $(evt.target);
-    var $form = $target.parents('form');
-    if ($form.length == 0) {
-        $form = $('.translation-form');
-    }
-    if ($form.length > 0) {
-        var submits = $form.find('input[type="submit"]');
-        if (submits.length > 0) {
-            submits[0].click();
-        }
-    }
-    return false;
-}
-
-function configureChart($chart) {
-    var $toolTip = $chart
-      .append('<div class="tooltip top" role="tooltip"><div class="tooltip-arrow"></div><div class="tooltip-inner"></div></div>')
-      .find('.tooltip');
-
-    $chart.on('mouseenter', '.ct-bar', function() {
-        var $bar = $(this),
-            value = $bar.attr('ct:value'),
-            pos = $bar.offset();
-
-        $toolTip.find('.tooltip-inner').html(value);
-        pos.top = pos.top - $toolTip.outerHeight();
-        pos.left = pos.left - ($toolTip.outerWidth() / 2) + 7.5 /* stroke-width / 2 */;
-        $toolTip.offset(pos);
-        $toolTip.css('opacity', 1);
-    });
-
-    $chart.on('mouseleave', '.ct-bar', function() {
-        $toolTip.css('opacity', 0);
-    });
-}
-
-
-function loadActivityChart(element) {
-    if (activityDataLoaded) {
-        return;
-    }
-    activityDataLoaded = true;
-
-    increaseLoading('#activity-loading');
-    $.ajax({
-        url: element.data('monthly'),
-        success: function(data) {
-            Chartist.Bar('#activity-month', data);
-            configureChart($('#activity-month'));
-            decreaseLoading('#activity-loading');
-        },
-        dataType: 'json'
-    });
-
-    increaseLoading('#activity-loading');
-    $.ajax({
-        url: element.data('yearly'),
-        success: function(data) {
-            Chartist.Bar('#activity-year', data);
-            configureChart($('#activity-year'));
-            decreaseLoading('#activity-loading');
-        },
-        dataType: 'json'
-    });
-}
-
-function initEditor(editors) {
-    /* Autosizing */
-    autosize($('.translation-editor'));
-
-    /* Copy source text */
-    $('.copy-text').click(function (e) {
-        var $this = $(this);
-        $this.button('loading');
-        $.get($this.data('href'), function (data) {
-            $this.parents('.translation-item').find('.translation-editor').val(data);
-            autosize.update($('.translation-editor'));
-            $('#id_' + $this.data('checksum') + '_fuzzy').prop('checked', true);
-            $this.button('reset');
-        }).fail(function(jqXHR, textStatus, errorThrown) {
-            $this.button('reset');
-            console.log('Failed to fetch ' + $this.data('href') + ': ' + textStatus);
-        });
-        e.preventDefault();
-    });
-
-    /* Direction toggling */
-    $('.direction-toggle').change(function (e) {
-        var $this = $(this);
-        $this.parents('.translation-item').find('.translation-editor').attr(
-            'dir',
-            $this.find('input').val()
-        );
-    });
-
-    /* Special characters */
-    $('.specialchar').click(function (e) {
-        var $this = $(this);
-        var text = $this.text();
-        if (text === '\\t') {
-            text = '\t';
-        } else if (text === '→') {
-            text = '\t';
-        } else if (text === '↵') {
-            text = '\r';
-        }
-        $this.parents('.translation-item').find('.translation-editor').insertAtCaret(text);
-        autosize.update($('.translation-editor'));
-        e.preventDefault();
-    });
-
-}
-
-function testChangeHandler(e) {
-    if (e.key && e.key === 'Tab') {
-        return;
-    }
-    $(this).parents('form').find('[name=fuzzy]').prop('checked', false);
-}
-
-function processMachineTranslation(data, textStatus, jqXHR) {
-    decreaseLoading('#mt-loading');
-    if (data.responseStatus === 200) {
-        data.translations.forEach(function (el, idx, ar) {
-            var newRow = $('<tr/>').data('quality', el.quality);
-            var done = false;
-            newRow.append($('<td/>').attr('class', 'target').attr('lang', data.lang).attr('dir', data.dir).text(el.text));
-            newRow.append($('<td/>').text(el.source));
-            newRow.append($('<td/>').text(el.service));
-            /* Translators: Verb for copy operation */
-            newRow.append($(
-                '<td>' +
-                '<a class="copymt btn btn-xs btn-default">' +
-                '<i class="fa fa-clipboard"></i> ' +
-                gettext('Copy') +
-                '<span class="mt-number text-info"></span>' +
-                '</a>' +
-                '<a class="copymt-save btn btn-xs btn-success">' +
-                '<i class="fa fa-save"></i> ' +
-                gettext('Copy and save') +
-                '</a>' +
-                '</td>'
-            ));
-            var $machineTranslations = $('#machine-translations');
-            $machineTranslations.children('tr').each(function (idx) {
-                if ($(this).data('quality') < el.quality && !done) {
-                    $(this).before(newRow);
-                    done = true;
-                }
-            });
-            if (! done) {
-                $machineTranslations.append(newRow);
-            }
-        });
-        $('a.copymt').click(function () {
-            var text = $(this).parent().parent().find('.target').text();
-            $('.translation-editor').val(text).trigger('autosize.resize');
-            $('#id_fuzzy').prop('checked', true);
-        });
-        $('a.copymt-save').click(function () {
-            var text = $(this).parent().parent().find('.target').text();
-            $('.translation-editor').val(text).trigger('autosize.resize');
-            $('#id_fuzzy').prop('checked', false);
-            submitForm({target:$('.translation-editor')});
-        });
-
-        for (var i = 1; i < 10; i++){
-            Mousetrap.bindGlobal(
-                'alt+m ' + i,
-                function() {
-                    return false;
-                }
-            );
-        }
-
-        var $machineTranslations = $('#machine-translations');
-        $machineTranslations.children('tr').each(function (idx) {
-            if (idx < 10) {
-                var key = getNumericKey(idx);
-                $(this).find('.mt-number').html(
-                    " <span class='badge kbd-badge' title='" +
-                    interpolate(gettext('Alt+M then %s'), [key]) +
-                    "'>" +
-                    key +
-                    "</span>"
-                );
-                Mousetrap.bindGlobal(
-                    'alt+m ' + key,
-                    function(e) {
-                        $($('#machine-translations').children('tr')[idx]).find('a.copymt').click();
-                        return false;
-                    }
-                );
-            } else {
-                $(this).find('.mt-number').html('');
-            }
-        });
-
+  if ($form.length === 0) {
+    $form = $(".translation-form");
+  }
+  if ($form.length > 0) {
+    if (typeof selector !== "undefined") {
+      $form.find(selector).click();
     } else {
-        var msg = interpolate(
-            gettext('The request for machine translation using %s has failed:'),
-            [data.service]
-        );
-        $('#mt-errors').append(
-            $('<li>' + msg + ' ' + data.responseDetails + '</li>')
-        );
+      let submits = $form.find('input[type="submit"]');
+
+      if (submits.length === 0) {
+        submits = $form.find('button[type="submit"]');
+      }
+      if (submits.length > 0) {
+        submits[0].click();
+      }
     }
+  }
+  return false;
+}
+Mousetrap.bindGlobal("mod+enter", submitForm);
+
+function screenshotStart() {
+  $("#search-results tbody.unit-listing-body").empty();
+  increaseLoading("screenshots");
 }
 
-function failedMachineTranslation(jqXHR, textStatus, errorThrown) {
-    decreaseLoading('#mt-loading');
-    $('#mt-errors').append(
-        $('<li>' + gettext('The request for machine translation has failed:') + ' ' + textStatus + '</li>')
+function screenshotFailure() {
+  screenshotLoaded({ responseCode: 500 });
+}
+
+function screenshotAddString() {
+  var pk = $(this).data("pk");
+  var form = $("#screenshot-add-form");
+
+  $("#add-source").val(pk);
+  $.ajax({
+    type: "POST",
+    url: form.attr("action"),
+    data: form.serialize(),
+    dataType: "json",
+    success: function () {
+      var list = $("#sources-listing");
+      $.get(list.data("href"), function (data) {
+        list.find("table").replaceWith(data);
+      });
+    },
+    error: function (jqXHR, textStatus, errorThrown) {
+      addAlert(errorThrown);
+    },
+  });
+}
+
+function screnshotResultError(severity, message) {
+  $("#search-results tbody.unit-listing-body").html(
+    $("<tr/>")
+      .addClass(severity)
+      .html($('<td colspan="4"></td>').text(message)),
+  );
+}
+
+function screenshotLoaded(data) {
+  decreaseLoading("screenshots");
+  if (data.responseCode !== 200) {
+    screnshotResultError("danger", gettext("Error loading search results!"));
+  } else if (data.results.length === 0) {
+    screnshotResultError(
+      "warning",
+      gettext("No new matching source strings found."),
     );
-}
-
-function loadMachineTranslations(data, textStatus, jqXHR) {
-    decreaseLoading('#mt-loading');
-    data.forEach(function (el, idx, ar) {
-        increaseLoading('#mt-loading');
-        $.ajax({
-            url: $('#js-translate').attr('href') + '?service=' + el,
-            success: processMachineTranslation,
-            error: failedMachineTranslation,
-            dataType: 'json'
-        });
-    });
+  } else {
+    $("#search-results table").replaceWith(data.results);
+    $("#search-results").find(".add-string").click(screenshotAddString);
+  }
 }
 
 function isNumber(n) {
-    return !isNaN(parseFloat(n)) && isFinite(n);
+  return !isNaN(parseFloat(n)) && isFinite(n);
+}
+
+function extractText(cell) {
+  var value = $(cell).data("value");
+  if (typeof value !== "undefined") {
+    return value;
+  }
+  return $.text(cell);
 }
 
 function compareCells(a, b) {
-    if (a.indexOf('%') !== -1 && b.indexOf('%') !== -1) {
-        a = parseFloat(a.replace(',', '.'));
-        b = parseFloat(b.replace(',', '.'));
-    } else if (isNumber(a) && isNumber(b)) {
-        a  = parseFloat(a);
-        b  = parseFloat(b);
-    } else {
-        a = a.toLowerCase();
-        b = b.toLowerCase();
-    }
-    if (a == b) {
-        return 0;
-    }
-    if (a > b) {
-        return 1;
-    }
-    return -1;
+  if (typeof a === "number" && typeof b === "number") {
+  } else if (a.indexOf("%") !== -1 && b.indexOf("%") !== -1) {
+    a = parseFloat(a.replace(",", "."));
+    b = parseFloat(b.replace(",", "."));
+  } else if (isNumber(a) && isNumber(b)) {
+    a = parseFloat(a.replace(",", "."));
+    b = parseFloat(b.replace(",", "."));
+  } else if (typeof a === "string" && typeof b === "string") {
+    a = a.toLowerCase();
+    b = b.toLowerCase();
+  }
+  if (a == b) {
+    return 0;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return -1;
 }
 
 function loadTableSorting() {
-    $('table.sort').each(function () {
-        var table = $(this),
-            tbody = table.find('tbody'),
-            thead = table.find('thead'),
-            thIndex = 0;
-        $(this).find('thead th')
-            .each(function () {
+  $("table.sort").each(function () {
+    var table = $(this),
+      tbody = table.find("tbody"),
+      thead = table.find("thead"),
+      thIndex = 0;
 
-            var th = $(this),
-                inverse = 1;
-            // handle colspan
-            if (th.attr('colspan')) {
-                thIndex += parseInt(th.attr('colspan'), 10) - 1;
+    $(this)
+      .find("thead th")
+      .each(function () {
+        var th = $(this),
+          inverse = 1;
+
+        // handle colspan
+        if (th.attr("colspan")) {
+          thIndex += parseInt(th.attr("colspan"), 10) - 1;
+        }
+        // skip empty cells and cells with icon (probably already processed)
+        if (
+          th.text() !== "" &&
+          !th.hasClass("sort-init") &&
+          !th.hasClass("sort-skip")
+        ) {
+          // Store index copy
+          let myIndex = thIndex;
+          // Add icon, title and class
+          th.addClass("sort-init");
+          if (!th.hasClass("sort-cell")) {
+            // Skip statically initialized parts (when server side ordering is supported)
+            th.attr("title", gettext("Sort this column"))
+              .addClass("sort-cell")
+              .append('<span class="sort-icon" />');
+          }
+
+          // Click handler
+          th.click(function () {
+            tbody
+              .find("tr")
+              .sort(function (a, b) {
+                var $a = $(a),
+                  $b = $(b);
+                var a_parent = $a.data("parent"),
+                  b_parent = $b.data("parent");
+                if (a_parent) {
+                  $a = tbody.find("#" + a_parent);
+                }
+                if (b_parent) {
+                  $b = tbody.find("#" + b_parent);
+                }
+                return (
+                  inverse *
+                  compareCells(
+                    extractText($a.find("td,th")[myIndex]),
+                    extractText($b.find("td,th")[myIndex]),
+                  )
+                );
+              })
+              .appendTo(tbody);
+            thead.find(".sort-icon").removeClass("sort-down sort-up");
+            if (inverse === 1) {
+              $(this).find(".sort-icon").addClass("sort-down");
+            } else {
+              $(this).find(".sort-icon").addClass("sort-up");
             }
-            // skip empty cells and cells with icon (probably already processed)
-            if (th.text() !== '' && ! th.hasClass('sort-cell') && ! th.hasClass('sort-skip')) {
-                // Store index copy
-                var myIndex = thIndex;
-                // Add icon, title and class
-                th.attr('title', gettext('Sort this column')).addClass('sort-cell').append('<i class="sort-button fa fa-chevron-down sort-none" />');
 
-                // Click handler
-                th.click(function () {
-
-                    tbody.find('td,th').filter(function () {
-                        return $(this).index() === myIndex;
-                    }).sortElements(function (a, b) {
-                        return inverse * compareCells($.text([a]), $.text([b]));
-                    }, function () {
-
-                        // parentNode is the element we want to move
-                        return this.parentNode;
-
-                    });
-                    thead.find('i.sort-button').removeClass('fa-chevron-down fa-chevron-up').addClass('fa-chevron-down sort-none');
-                    if (inverse === 1) {
-                        $(this).find('i.sort-button').addClass('fa-chevron-down').removeClass('fa-chevron-up sort-none');
-                    } else {
-                        $(this).find('i.sort-button').addClass('fa-chevron-up').removeClass('fa-chevron-down sort-none');
-                    }
-
-                    inverse = inverse * -1;
-
-                });
-            }
-            // Increase index
-            thIndex += 1;
-        });
-
-    });
+            inverse = inverse * -1;
+          });
+        }
+        // Increase index
+        thIndex += 1;
+      });
+  });
 }
 
-function zenEditor(e) {
+/* Thin wrappers for django to avoid problems when i18n js can not be loaded */
+function gettext(msgid) {
+  if (typeof django !== "undefined") {
+    return django.gettext(msgid);
+  }
+  return msgid;
+}
+function pgettext(context, msgid) {
+  if (typeof django !== "undefined") {
+    return django.pgettext(context, msgid);
+  }
+  return msgid;
+}
+function interpolate(fmt, obj, named) {
+  if (typeof django !== "undefined") {
+    return django.interpolate(fmt, obj, named);
+  }
+  return fmt.replace(/%s/g, function () {
+    return String(obj.shift());
+  });
+}
+
+function load_matrix() {
+  var $loadingNext = $("#loading-next");
+  var $loader = $("#matrix-load");
+  var offset = parseInt($loader.data("offset"));
+
+  if ($("#last-section").length > 0 || $loadingNext.css("display") !== "none") {
+    return;
+  }
+  $loadingNext.show();
+
+  $loader.data("offset", 20 + offset);
+
+  $.get($loader.attr("href") + "&offset=" + offset, function (data) {
+    $loadingNext.hide();
+    $(".matrix tbody").append(data);
+  });
+}
+
+function adjustColspan() {
+  $("table.autocolspan").each(function () {
     var $this = $(this);
-    var $row = $this.parents('tr');
-    var checksum = $row.find('[name=checksum]').val();
+    var numOfVisibleCols = $this.find("thead th:visible").length;
+    if (numOfVisibleCols === 0) {
+      numOfVisibleCols = 3;
+    }
+    $this.find("td.autocolspan").attr("colspan", numOfVisibleCols - 1);
+  });
+}
 
-    $row.addClass('translation-modified');
+function quoteSearch(value) {
+  if (value.indexOf(" ") === -1) {
+    return value;
+  }
+  if (value.indexOf('"') === -1) {
+    return '"' + value + '"';
+  }
+  if (value.indexOf("'") === -1) {
+    return "'" + value + "'";
+  }
+  /* We should do some escaping here */
+  return value;
+}
 
-    var form = $row.find('form');
-    var statusdiv = $('#status-' + checksum).hide();
-    var loadingdiv = $('#loading-' + checksum).show();
-    $.post(
-        form.attr('action'),
-        form.serialize(),
-        function (data) {
-            var messages = $('<div>' + data + '</div>');
-            loadingdiv.hide();
-            statusdiv.show();
-            if (messages.find('.alert-danger').length > 0) {
-                statusdiv.attr('class', 'fa-times-circle text-danger');
-            } else if (messages.find('.alert-warning').length > 0) {
-                statusdiv.attr('class', 'fa-exclamation-circle text-warning');
-            } else if (messages.find('.alert-info').length > 0) {
-                statusdiv.attr('class', 'fa-check-circle text-warning');
-            } else {
-                statusdiv.attr('class', 'fa-check-circle text-success');
-            }
-            statusdiv.addClass('fa').tooltip('destroy');
-            if (data.trim() !== '') {
-                statusdiv.tooltip({
-                    'html': true,
-                    'title': data
-                });
-            };
-            $row.removeClass('translation-modified').addClass('translation-saved');
+function initHighlight(root) {
+  if (typeof ResizeObserver === "undefined") {
+    return;
+  }
+  root.querySelectorAll(".highlight-editor").forEach(function (editor) {
+    var parent = editor.parentElement;
+    var hasFocus = editor == document.activeElement;
+
+    if (parent.classList.contains("editor-wrap")) {
+      return;
+    }
+
+    var mode = editor.getAttribute("data-mode");
+
+    /* Create wrapper element */
+    var wrapper = document.createElement("div");
+    wrapper.setAttribute("class", "editor-wrap");
+
+    /* Inject wrapper */
+    parent.replaceChild(wrapper, editor);
+
+    /* Create highlighter */
+    var highlight = document.createElement("div");
+    highlight.setAttribute("class", "highlighted-output");
+    if (editor.readOnly) {
+      highlight.classList.add("readonly");
+    }
+    highlight.setAttribute("role", "status");
+    if (editor.hasAttribute("dir")) {
+      highlight.setAttribute("dir", editor.getAttribute("dir"));
+    }
+    if (editor.hasAttribute("lang")) {
+      highlight.setAttribute("lang", editor.getAttribute("lang"));
+    }
+    wrapper.appendChild(highlight);
+
+    /* Add editor to wrapper */
+    wrapper.appendChild(editor);
+    if (hasFocus) {
+      editor.focus();
+    }
+
+    /* Content synchronisation and highlighting */
+    var languageMode = Prism.languages[mode];
+    if (editor.classList.contains("translation-editor")) {
+      let placeables = editor.getAttribute("data-placeables");
+      /* This should match WHITESPACE_REGEX in weblate/trans/templatetags/translations.py */
+      let whitespace_regex = new RegExp(
+        [
+          "  +|(^) +| +(?=$)| +\n|\n +|\t|",
+          "\u00A0|\u1680|\u2000|\u2001|",
+          "\u2002|\u2003|\u2004|\u2005|",
+          "\u2006|\u2007|\u2008|\u2009|",
+          "\u200A|\u202F|\u205F|\u3000",
+        ].join(""),
+      );
+      let extension = {
+        hlspace: {
+          pattern: whitespace_regex,
+          lookbehind: true,
+        },
+      };
+      if (placeables) {
+        extension.placeable = RegExp(placeables);
+      }
+      /*
+       * We can not use Prism.extend here as we want whitespace highlighting
+       * to apply first. The code is borrowed from Prism.util.clone.
+       */
+      for (var key in languageMode) {
+        if (languageMode.hasOwnProperty(key)) {
+          extension[key] = Prism.util.clone(languageMode[key]);
         }
-    );
+      }
+      languageMode = extension;
+    }
+    var syncContent = function () {
+      highlight.innerHTML = Prism.highlight(editor.value, languageMode, mode);
+      autosize.update(editor);
+    };
+    syncContent();
+    editor.addEventListener("input", syncContent);
+
+    /* Handle scrolling */
+    editor.addEventListener("scroll", (event) => {
+      highlight.scrollTop = editor.scrollTop;
+      highlight.scrollLeft = editor.scrollLeft;
+    });
+
+    /* Handle resizing */
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        if (entry.target === editor) {
+          // match the height and width of the output area to the input area
+          highlight.style.height = editor.offsetHeight + "px";
+          highlight.style.width = editor.offsetWidth + "px";
+        }
+      }
+    });
+
+    resizeObserver.observe(editor);
+    /* Autosizing */
+    autosize(editor);
+  });
 }
 
 $(function () {
-    var $window = $(window), $document = $(document);
-    /* AJAX loading of tabs/pills */
-    $document.on('show.bs.tab', '[data-toggle="tab"][data-href], [data-toggle="pill"][data-href]', function (e) {
-        var $target = $(e.target);
-        var $content = $($target.attr('href'));
-        if ($target.data('loaded')) {
-            return;
+  var $window = $(window),
+    $document = $(document);
+
+  adjustColspan();
+  $window.resize(adjustColspan);
+  $document.on("shown.bs.tab", adjustColspan);
+
+  /* AJAX loading of tabs/pills */
+  $document.on(
+    "show.bs.tab",
+    '[data-toggle="tab"][data-href], [data-toggle="pill"][data-href]',
+    function (e) {
+      var $target = $(e.target);
+      var $content = $($target.attr("href"));
+      if ($target.data("loaded")) {
+        return;
+      }
+      if ($content.find(".panel-body").length > 0) {
+        $content = $content.find(".panel-body");
+      }
+      $content.load($target.data("href"), function (responseText, status, xhr) {
+        if (status !== "success") {
+          var msg = gettext("Error while loading page:");
+          $content.text(
+            msg +
+              " " +
+              xhr.statusText +
+              " (" +
+              xhr.status +
+              "): " +
+              responseText,
+          );
         }
-        if ($content.find('.panel-body').length > 0) {
-            $content = $content.find('.panel-body');
-        };
-        $content.load(
-            $target.data('href'),
-            function (response, status, xhr) {
-                if ( status === 'error' ) {
-                    var msg = gettext('Error while loading page:');
-                    $content.html( msg + ' '  + xhr.status + ' ' + xhr.statusText );
-                }
-                $target.data('loaded', 1);
-                loadTableSorting();
-            }
-        );
-    });
+        $target.data("loaded", 1);
+        loadTableSorting();
+      });
+    },
+  );
 
-    /* Activity charts on tabs */
-    $document.on('show.bs.tab', '[data-load="activity"]', function (e) {
-        loadActivityChart($(this));
+  if ($("#form-activetab").length > 0) {
+    $document.on("show.bs.tab", '[data-toggle="tab"]', function (e) {
+      var $target = $(e.target);
+      $("#form-activetab").attr("value", $target.attr("href"));
     });
+  }
 
-    /* Automatic loading of activity charts on page load */
-    var autoLoadActivity = $('#load-activity');
-    if (autoLoadActivity.length > 0) {
-        loadActivityChart(autoLoadActivity);
+  /* Form automatic submission */
+  $("form.autosubmit select").change(function () {
+    $("form.autosubmit").submit();
+  });
+
+  var activeTab;
+
+  /* Load correct tab */
+  if (location.hash !== "") {
+    /* From URL hash */
+    var separator = location.hash.indexOf("__");
+    if (separator != -1) {
+      activeTab = $(
+        '.nav [data-toggle=tab][href="' +
+          location.hash.substr(0, separator) +
+          '"]',
+      );
+      if (activeTab.length) {
+        activeTab.tab("show");
+      }
     }
-
-    /* Machine translation */
-    $document.on('show.bs.tab', '[data-load="mt"]', function (e) {
-        if (machineTranslationLoaded) {
-            return;
-        }
-        machineTranslationLoaded = true;
-        increaseLoading('#mt-loading');
-        $.ajax({
-            url: $('#js-mt-services').attr('href'),
-            success: loadMachineTranslations,
-            error: failedMachineTranslation,
-            dataType: 'json'
-        });
-    });
-
-    /* Git commit tooltip */
-    $document.tooltip({
-        selector: '.html-tooltip',
-        html: true
-    });
-
-    /* Hiding spam protection field */
-    $('#s_content').hide();
-    $('#id_content').parent('div').hide();
-    $('#div_id_content').hide();
-
-    /* Form automatic submission */
-    $('form.autosubmit select').change(function () {
-        $('form.autosubmit').submit();
-    });
-
-    /* Row expander */
-    $('.expander').click(function () {
-        var $this = $(this);
-        var $tableRow = $this.closest('tr');
-        var $nextRow = $tableRow.next();
-        $nextRow.toggle();
-        $tableRow.find('.expand-icon').toggleClass('fa-chevron-right').toggleClass('fa-chevron-down');
-        var $loader = $nextRow.find('.load-details');
-        if ($loader.length > 0) {
-            var url = $loader.attr('href');
-            $loader.remove();
-            $.get(
-                url,
-                function (data) {
-                    var $cell = $nextRow.find('.details-content');
-                    $cell.find('.fa-spin').remove();
-                    $cell.append(data);
-                    $cell.find('[data-flag]').click(function (e) {
-                        var $this = $(this);
-                        var $textarea = $this.closest('td').find('input[type="text"]');
-                        if ($textarea.val().length > 0) {
-                            $textarea.val($textarea.val() + ',' + $this.data('flag'));
-                        } else {
-                            $textarea.val($this.data('flag'));
-                        }
-                        e.preventDefault();
-                    });
-                }
-            );
-        }
-    });
-
-    /* Priority editor */
-    $('.edit-priority').click(function (e) {
-        e.preventDefault();
-        $(this).closest('tr').find('.expander').first().click();
-    });
-
-    /* Auto expand expander */
-    $('.auto-expand').each(function () {
-        $(this).click();
-    });
-
-    var activeTab;
-
-    /* Load correct tab */
-    if (location.hash !== '') {
-        /* From URL hash */
-        activeTab = $('[data-toggle=tab][href=' + location.hash + ']');
-        if (activeTab.length) {
-            activeTab.tab('show');
-            window.scrollTo(0, 0);
-        }
-    } else if ($('.translation-tabs').length > 0 && $.cookie('translate-tab')) {
-        /* From cookie */
-        activeTab = $('[data-toggle=tab][href=' + $.cookie('translate-tab') + ']');
-        if (activeTab.length) {
-            activeTab.tab('show');
-        }
+    activeTab = $('.nav [data-toggle=tab][href="' + location.hash + '"]');
+    if (activeTab.length) {
+      activeTab.tab("show");
+      window.scrollTo(0, 0);
+    } else {
+      let anchor = document.getElementById(location.hash.substr(1));
+      if (anchor !== null) {
+        anchor.scrollIntoView();
+      }
     }
-
-    /* Add a hash to the URL when the user clicks on a tab */
-    $('a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
-        history.pushState(null, null, $(this).attr('href'));
-        /* Remove focus on rows */
-        $('.selectable-row').removeClass('active');
-    });
-
-    /* Store active translation tab in cookie */
-    $('.translation-tabs a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
-        $.cookie('translate-tab', $(this).attr('href'));
-    });
-
-    /* Navigate to a tab when the history changes */
-    window.addEventListener('popstate', function(e) {
-        if (location.hash !== '') {
-            activeTab = $('[data-toggle=tab][href=' + location.hash + ']');
-        } else {
-            activeTab = Array();
-        }
-        if (activeTab.length) {
-            activeTab.tab('show');
-        } else {
-            $('.nav-tabs a:first').tab('show');
-        }
-    });
-
-    /* Activate tab with error */
-    var formErrors = $('div.has-error');
-    if (formErrors.length > 0) {
-        var tab = formErrors.closest('div.tab-pane');
-        if (tab.length > 0) {
-            $('[data-toggle=tab][href=#' + tab.attr('id')+ ']').tab('show');
-        }
-    }
-
-    /* Translation editor */
-    Mousetrap.bindGlobal(
-        ['alt+enter', 'ctrl+enter', 'command+enter'],
-        submitForm
+  } else if (
+    $(".translation-tabs").length > 0 &&
+    Cookies.get("translate-tab")
+  ) {
+    /* From cookie */
+    activeTab = $(
+      '[data-toggle=tab][href="' + Cookies.get("translate-tab") + '"]',
     );
-    var translationEditor = $('.translation-editor');
-    if (translationEditor.length > 0) {
-        $document.on('change', '.translation-editor', testChangeHandler);
-        $document.on('keypress', '.translation-editor', testChangeHandler);
-        initEditor();
-        translationEditor.get(0).focus();
-        if ($('#button-first').length > 0) {
-            Mousetrap.bindGlobal('alt+end', function(e) {window.location = $('#button-end').attr('href'); return false;});
-            Mousetrap.bindGlobal('alt+pagedown', function(e) {window.location = $('#button-next').attr('href'); return false;});
-            Mousetrap.bindGlobal('alt+pageup', function(e) {window.location = $('#button-prev').attr('href'); return false;});
-            Mousetrap.bindGlobal('alt+home', function(e) {window.location = $('#button-first').attr('href'); return false;});
-            Mousetrap.bindGlobal('alt+v', function(e) {$('.translation-item .copy-text').click(); return false;});
-            Mousetrap.bindGlobal('alt+f', function(e) {$('input[name="fuzzy"]').click(); return false;});
-            Mousetrap.bindGlobal(
-                ['ctrl+shift+enter', 'command+shift+enter'],
-                function(e) {$('input[name="fuzzy"]').prop('checked', false); return submitForm(e);}
-            );
-            Mousetrap.bindGlobal(
-                'alt+e',
-                function(e) {
-                    $('.translation-editor').get(0).focus();
-                    return false;
-                }
-            );
-            Mousetrap.bindGlobal(
-                'alt+s',
-                function(e) {
-                    $('.nav [href="#search"]').click();
-                    $('input[name="q"]').focus();
-                    return false;
-                }
-            );
-            Mousetrap.bindGlobal(
-                'alt+c',
-                function(e) {
-                    $('.nav [href="#comments"]').click();
-                    $('textarea[name="comment"]').focus();
-                    return false;
-                }
-            );
-            Mousetrap.bindGlobal(
-                'alt+n',
-                function(e) {
-                    $('.nav [href="#nearby"]').click();
-                    return false;
-                }
-            );
-            Mousetrap.bindGlobal(
-                'alt+m',
-                function(e) {
-                    $('.nav [href="#machine"]').click();
-                    return false;
-                }
-            );
-        }
+    if (activeTab.length) {
+      activeTab.tab("show");
+    }
+  }
+
+  /* Add a hash to the URL when the user clicks on a tab */
+  $('a[data-toggle="tab"]').on("shown.bs.tab", function (e) {
+    history.pushState(null, null, $(this).attr("href"));
+    /* Remove focus on rows */
+    $(".selectable-row").removeClass("active");
+  });
+
+  /* Navigate to a tab when the history changes */
+  window.addEventListener("popstate", function (e) {
+    if (location.hash !== "") {
+      activeTab = $('[data-toggle=tab][href="' + location.hash + '"]');
+    } else {
+      activeTab = Array();
+    }
+    if (activeTab.length) {
+      activeTab.tab("show");
+    } else {
+      $(".nav-tabs a:first").tab("show");
+    }
+  });
+
+  /* Activate tab with error */
+  var formErrors = $("div.has-error");
+  if (formErrors.length > 0) {
+    var tab = formErrors.closest("div.tab-pane");
+    if (tab.length > 0) {
+      $('[data-toggle=tab][href="#' + tab.attr("id") + '"]').tab("show");
+    }
+  }
+
+  /* Announcement discard */
+  $(".alert").on("close.bs.alert", function () {
+    var $this = $(this);
+    var $form = $("#link-post");
+
+    if ($this.data("action")) {
+      $.ajax({
+        type: "POST",
+        url: $this.data("action"),
+        data: {
+          csrfmiddlewaretoken: $form.find("input").val(),
+          id: $this.data("id"),
+        },
+        error: function (jqXHR, textStatus, errorThrown) {
+          addAlert(errorThrown);
+        },
+      });
+    }
+  });
+
+  /* Widgets selector */
+  $(".select-tab").on("change", function (e) {
+    $(this).parent().find(".tab-pane").removeClass("active");
+    $("#" + $(this).val()).addClass("active");
+  });
+
+  /* Code samples (on widgets page) */
+  $(".code-example").focus(function () {
+    $(this).select();
+  });
+
+  /* Table sorting */
+  loadTableSorting();
+
+  /* Matrix mode handling */
+  if ($(".matrix").length > 0) {
+    load_matrix();
+    $window.scroll(function () {
+      if ($window.scrollTop() >= $document.height() - 2 * $window.height()) {
+        load_matrix();
+      }
+    });
+  }
+
+  /* Social auth disconnect */
+  $("a.disconnect").click(function (e) {
+    e.preventDefault();
+    $("form#disconnect-form").attr("action", $(this).attr("href")).submit();
+  });
+
+  $(".dropdown-menu")
+    .find("form")
+    .click(function (e) {
+      e.stopPropagation();
+    });
+
+  $document.on("click", ".link-post", function () {
+    var $form = $("#link-post");
+    var $this = $(this);
+
+    $form.attr("action", $this.attr("data-href"));
+    $.each($this.data("params"), function (name, value) {
+      var elm = $("<input>")
+        .attr("type", "hidden")
+        .attr("name", name)
+        .attr("value", value);
+      $form.append(elm);
+    });
+    $form.submit();
+    return false;
+  });
+  $(".link-auto").click();
+  $document.on("click", ".thumbnail", function () {
+    var $this = $(this);
+    $("#imagepreview").attr("src", $this.attr("href"));
+    $("#screenshotModal").text($this.attr("title"));
+
+    var detailsLink = $("#modalDetailsLink");
+    detailsLink.attr("href", $this.data("details-url"));
+    if ($this.data("can-edit")) {
+      detailsLink.text(detailsLink.data("edit-text"));
     }
 
-    /* Generic tooltips */
-    $('.tooltip-control').tooltip();
+    $("#imagemodal").modal("show");
+    return false;
+  });
+  /* Screenshot management */
+  $("#screenshots-search,#screenshots-auto").click(function () {
+    var $this = $(this);
 
-    /* Check ignoring */
-    $('.check').bind('close.bs.alert', function () {
+    screenshotStart();
+    $.ajax({
+      type: "POST",
+      url: $this.data("href"),
+      data: $this.parent().serialize(),
+      dataType: "json",
+      success: screenshotLoaded,
+      error: screenshotFailure,
+    });
+    return false;
+  });
+
+  /* Avoid double submission of non AJAX forms */
+  $("form:not(.double-submission)").on("submit", function (e) {
+    var $form = $(this);
+
+    if ($form.data("submitted") === true) {
+      // Previously submitted - don't submit again
+      e.preventDefault();
+    } else {
+      // Mark it so that the next submit can be ignored
+      $form.data("submitted", true);
+    }
+  });
+  /* Reset submitted flag when leaving the page, so that it is not set when going back in history */
+  $window.on("pagehide", function () {
+    $("form:not(.double-submission)").data("submitted", false);
+  });
+
+  /* Client side form persistence */
+  var $forms = $("[data-persist]");
+  if ($forms.length > 0 && window.localStorage) {
+    /* Load from local storage */
+    $forms.each(function () {
+      var $this = $(this);
+      var storedValue = window.localStorage[$this.data("persist")];
+      if (storedValue) {
+        storedValue = JSON.parse(storedValue);
+        $.each(storedValue, function (key, value) {
+          var target = $this.find("[name=" + key + "]");
+          if (target.is(":checkbox")) {
+            target.prop("checked", value);
+          } else {
+            target.val(value);
+          }
+        });
+      }
+    });
+    /* Save on submit */
+    $forms.submit(function (e) {
+      var data = {};
+      var $this = $(this);
+
+      $this.find(":checkbox").each(function () {
         var $this = $(this);
-        $.get($this.data('href'));
-        $this.tooltip('destroy');
-    });
 
-    /* Check link clicking */
-    $document.on('click', '.check [data-toggle="tab"]', function (e) {
-        var href = $(this).attr('href');
-        e.preventDefault();
-        $('.nav [href="' + href + '"]').click();
-        $window.scrollTop($(href).offset().top);
-    });
+        data[$this.attr("name")] = $this.prop("checked");
+      });
+      $this.find("select").each(function () {
+        var $this = $(this);
 
-    /* Copy from dictionary */
-    $('.copydict').click(function (e) {
-        var text = $(this).parents('tr').find('.target').text();
-        $('.translation-editor').insertAtCaret($.trim(text)).trigger('autosize.resize');;
-        e.preventDefault();
+        data[$this.attr("name")] = $this.val();
+      });
+      window.localStorage[$this.data("persist")] = JSON.stringify(data);
     });
+  }
 
+  /* Focus first input in modal */
+  $(document).on("shown.bs.modal", function (event) {
+    var button = $(event.relatedTarget); // Button that triggered the modal
+    var target = button.data("focus");
+    if (target) {
+      /* Modal context focusing */
+      $(target).focus();
+    } else {
+      $("input:visible:enabled:first", event.target).focus();
+    }
+  });
 
-    /* Copy from source text highlight check */
-    $('.hlcheck').click(function (e) {
-        var text = $(this).clone();
-        text.find(".highlight-number").remove();
-        text=text.text();
-        $('.translation-editor').insertAtCaret($.trim(text)).trigger('autosize.resize');;
-        e.preventDefault();
+  /* Copy to clipboard */
+  $("[data-clipboard-text]").on("click", function (e) {
+    navigator.clipboard
+      .writeText(this.getAttribute("data-clipboard-text"))
+      .then(
+        () => {
+          var text =
+            this.getAttribute("data-clipboard-message") ||
+            gettext("Text copied to clipboard.");
+          addAlert(text, (kind = "info"));
+        },
+        () => {
+          addAlert(gettext("Please press Ctrl+C to copy."), (kind = "danger"));
+        },
+      );
+    e.preventDefault();
+  });
+
+  /* Auto translate source select */
+  var select_auto_source = $('input[name="auto_source"]');
+  if (select_auto_source.length > 0) {
+    select_auto_source.on("change", function () {
+      if ($('input[name="auto_source"]:checked').val() == "others") {
+        $("#auto_source_others").show();
+        $("#auto_source_mt").hide();
+      } else {
+        $("#auto_source_others").hide();
+        $("#auto_source_mt").show();
+      }
     });
-    /* and shortcuts */
-    for (var i = 1; i < 10; i++) {
-        Mousetrap.bindGlobal(
-            "alt+" + i,
-            function(e) {
-                return false;
-            }
+    select_auto_source.trigger("change");
+  }
+
+  /* Override all multiple selects */
+  $("select[multiple]").multi({
+    enable_search: true,
+    search_placeholder: gettext("Search…"),
+    non_selected_header: gettext("Available:"),
+    selected_header: gettext("Chosen:"),
+  });
+
+  /* Slugify name */
+  slugify.extend({ ".": "-" });
+  $('input[name="slug"]').each(function () {
+    var $slug = $(this);
+    var $form = $slug.closest("form");
+    $form
+      .find('input[name="name"]')
+      .on("change keypress keydown keyup paste", function () {
+        $slug.val(
+          slugify($(this).val(), { remove: /[^\w\s-]+/g }).toLowerCase(),
         );
-    }
-    if ($(".hlcheck").length>0) {
-        $('.hlcheck').each(function(idx){
-            var $this = $(this);
-            if (idx < 10) {
-                var key = getNumericKey(idx);
-                $(this).find('.highlight-number').html(
-                    " <span class='badge kbd-badge' title='" +
-                    interpolate(gettext('Alt+%s'), [key]) +
-                    "'>" +
-                    key +
-                    "</span>"
-                );
+      });
+  });
 
-                Mousetrap.bindGlobal(
-                    "alt+" + key,
-                    function(e) {
-                        $this.click();
-                        return false;
-                    }
-                );
-            } else {
-                $this.find(".highlight-number").html("");
-            }
-        });
-    }
+  /* Component update progress */
+  $("[data-progress-url]").each(function () {
+    var $progress = $(this);
+    var $pre = $progress.find("pre"),
+      $bar = $progress.find(".progress-bar"),
+      url = $progress.data("progress-url");
+    var $form = $("#link-post");
 
-    /* Widgets selector */
-    $('.select-tab').on('change', function (e) {
-         $(this).parent().find('.tab-pane').removeClass('active');
-        $('#' + $(this).val()).addClass('active');
-    });
+    $pre.animate({ scrollTop: $pre.get(0).scrollHeight });
 
-    /* Code samples (on widgets page) */
-    $('.code-example').focus(function () {
-        $(this).select();
-    });
-
-    /* Table sorting */
-    loadTableSorting();
-
-    /* Table column changing */
-    var columnsMenu = $('#columns-menu');
-    if (columnsMenu.length > 0) {
-        var columnsPanel = columnsMenu.closest('div.panel');
-        var width = columnsPanel.width();
-
-        columnsMenu.on('click', function(e) {
-            e.stopPropagation();
-        });
-        columnsMenu.find('input').on('click', function(e) {
-            var $this = $(this);
-            columnsPanel.find('.' + $this.attr('id').replace('toggle-', 'col-')).toggle($this.attr('checked'));
-            e.stopPropagation();
-        });
-        columnsMenu.find('a').on('click', function(e) {
-            $(this).find('input').click();
-            e.stopPropagation();
-            e.preventDefault();
-        });
-
-        if (width < 700) {
-            columnsMenu.find('#toggle-suggestions').click();
-        }
-        if (width < 600) {
-            columnsMenu.find('#toggle-checks').click();
-        }
-        if (width < 500) {
-            columnsMenu.find('#toggle-fuzzy').click();
-        }
-        if (width < 500) {
-            columnsMenu.find('#toggle-words').click();
-        }
-    }
-
-    /* Lock updates */
-    if ($('#js-lock').length > 0) {
-        var jsLockUpdate = window.setInterval(function () {
-            /* No locking for idle users */
-            if (idleTime >= 5) {
-                return;
-            }
-            $.ajax({
-                url: $('#js-lock').attr('href'),
-                success: function(data) {
-                    if (! data.status) {
-                        $('.lock-error').remove();
-                        var message = $('<div class="alert lock-error alert-danger"></div>');
-                        message.text(data.message);
-                        $('.content').prepend(message);
-                    }
-                },
-                dataType: 'json'
-            });
-        }, 19000);
-
-        var idleTime = 0;
-
-        var idleInterval = setInterval(
-            function () {
-                idleTime = idleTime + 1;
-            },
-            60000 // 1 minute
-        );
-
-        // Zero the idle timer on mouse movement.
-        $(document).click(function (e) {
-            idleTime = 0;
-        });
-        $(document).mousemove(function (e) {
-            idleTime = 0;
-        });
-        $(document).keypress(function (e) {
-            idleTime = 0;
-        });
-
-        window.setInterval(function () {
-            window.clearInterval(jsLockUpdate);
-        }, 3600000);
+    var progress_completed = function () {
+      $bar.width("100%");
+      if ($("#progress-redirect").prop("checked")) {
+        window.location = $("#progress-return").attr("href");
+      }
     };
 
-    /* Zen mode handling */
-    if ($('.zen').length > 0) {
-        $window.scroll(function(){
-            var $loadingNext = $('#loading-next');
-            if ($window.scrollTop() >= $document.height() - (2 * $window.height())) {
-                if ($('#last-section').length > 0 || $loadingNext.css('display') !== 'none') {
-                    return;
-                }
-                $loadingNext.show();
+    var progress_interval = setInterval(function () {
+      $.ajax({
+        url: url,
+        type: "get",
+        error: function (XMLHttpRequest, textStatus, errorThrown) {
+          if (XMLHttpRequest.status == 404) {
+            clearInterval(progress_interval);
+            progress_completed();
+          }
+        },
+        success: function (data) {
+          $bar.width(data.progress + "%");
+          $pre.text(data.log);
+          $pre.animate({ scrollTop: $pre.get(0).scrollHeight });
+          if (data.completed) {
+            clearInterval(progress_interval);
+            progress_completed();
+          }
+        },
+      });
+    }, 1000);
 
-                var loader = $('#zen-load');
-                loader.data('offset', 20 + parseInt(loader.data('offset'), 10));
-
-                $.get(
-                    loader.attr('href') + '&offset=' + loader.data('offset'),
-                    function (data) {
-                        $loadingNext.hide();
-
-                        $('.zen tbody').append(data);
-
-                        initEditor();
-                    }
-                );
-            }
-        });
-
-        $document.on('change', '.translation-editor', zenEditor);
-        $document.on('change', '.fuzzy_checkbox', zenEditor);
-
-        $window.on('beforeunload', function(){
-            if ($('.translation-modified').length > 0) {
-                return gettext('There are some unsaved changes, are you sure you want to leave?');
-            }
-        });
-    };
-
-    /* Social auth disconnect */
-    $('a.disconnect').click(function (e) {
-        e.preventDefault();
-        $('form#disconnect-form')
-            .attr('action', $(this).attr('href'))
-            .submit();
+    $("#terminate-task-button").click((e) => {
+      fetch(url, {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+          "X-CSRFToken": $form.find("input").val(),
+        },
+      }).then((data) => {
+        window.location = $("#progress-return").attr("href");
+      });
+      e.preventDefault();
     });
+  });
 
-    /* Datepicker localization */
-    $.fn.datepicker.dates.en = {
-        days: [
-            gettext("Sunday"), gettext("Monday"), gettext("Tuesday"),
-            gettext("Wednesday"), gettext("Thursday"), gettext("Friday"),
-            gettext("Saturday"), gettext("Sunday")
-        ],
-        daysShort: [
-            pgettext("Short (eg. three letter) name of day in week", "Sun"),
-            pgettext("Short (eg. three letter) name of day in week", "Mon"),
-            pgettext("Short (eg. three letter) name of day in week", "Tue"),
-            pgettext("Short (eg. three letter) name of day in week", "Wed"),
-            pgettext("Short (eg. three letter) name of day in week", "Thu"),
-            pgettext("Short (eg. three letter) name of day in week", "Fri"),
-            pgettext("Short (eg. three letter) name of day in week", "Sat"),
-            pgettext("Short (eg. three letter) name of day in week", "Sun")
-        ],
-        daysMin: [
-            pgettext("Minimal (eg. two letter) name of day in week", "Su"),
-            pgettext("Minimal (eg. two letter) name of day in week", "Mo"),
-            pgettext("Minimal (eg. two letter) name of day in week", "Tu"),
-            pgettext("Minimal (eg. two letter) name of day in week", "We"),
-            pgettext("Minimal (eg. two letter) name of day in week", "Th"),
-            pgettext("Minimal (eg. two letter) name of day in week", "Fr"),
-            pgettext("Minimal (eg. two letter) name of day in week", "Sa"),
-            pgettext("Minimal (eg. two letter) name of day in week", "Su")
-        ],
-        months: [
-            gettext("January"), gettext("February"), gettext("March"),
-            gettext("April"), gettext("May"), gettext("June"), gettext("July"),
-            gettext("August"), gettext("September"), gettext("October"),
-            gettext("November"), gettext("December")
-        ],
-        monthsShort: [
-            pgettext("Short name of month", "Jan"),
-            pgettext("Short name of month", "Feb"),
-            pgettext("Short name of month", "Mar"),
-            pgettext("Short name of month", "Apr"),
-            pgettext("Short name of month", "May"),
-            pgettext("Short name of month", "Jun"),
-            pgettext("Short name of month", "Jul"),
-            pgettext("Short name of month", "Aug"),
-            pgettext("Short name of month", "Sep"),
-            pgettext("Short name of month", "Oct"),
-            pgettext("Short name of month", "Nov"),
-            pgettext("Short name of month", "Dec")
-        ],
-        today: gettext("Today"),
-        clear: gettext("Clear"),
-        weekStart: django.formats.FIRST_DAY_OF_WEEK,
-        titleFormat: "MM yyyy"
-    };
+  /* Generic messages progress */
+  $("[data-task]").each(function () {
+    var $message = $(this);
+    var $bar = $message.find(".progress-bar");
 
-    /* Override all multiple selects, use font awesome for exchange icon */
-    $('select[multiple]').each(function () {
-        $(this).multiSelect({
-            afterInit: function (target) {
-                $(target.children()[0]).after(
-                    '<div class="fa-multiselect"><i class="fa fa-exchange"></i></div>'
-                );
-            }
-        });
+    var task_interval = setInterval(function () {
+      $.get($message.data("task"), function (data) {
+        $bar.width(data.progress + "%");
+        if (data.completed) {
+          clearInterval(task_interval);
+          $message.text(data.result.message);
+        }
+      });
+    }, 1000);
+  });
+
+  /* Disable invalid file format choices */
+  $(".invalid-format").each(function () {
+    $(this).parent().find("input").attr("disabled", "1");
+  });
+
+  // Show the correct toggle button
+  if ($(".sort-field").length) {
+    var sort_name = $("#query-sort-dropdown span.search-label").text();
+    var sort_dropdown_value = $(".sort-field li a")
+      .filter(function () {
+        return $(this).text() == sort_name;
+      })
+      .data("sort");
+    var sort_value = $("#id_sort_by").val();
+    var $label = $(this).find("span.search-icon");
+    if (sort_dropdown_value) {
+      if (
+        sort_value.replace("-", "") === sort_dropdown_value.replace("-", "") &&
+        sort_value !== sort_dropdown_value
+      ) {
+        $label.toggle();
+      }
+    }
+  }
+
+  /* Branch loading */
+  $(".branch-loader select[name=component]").change(function () {
+    var $this = $(this);
+    var $form = $this.closest("form");
+    var branches = $form.data("branches");
+    var $select = $form.find("select[name=branch]");
+    $select.empty();
+    $.each(branches[$this.val()], function (key, value) {
+      $select.append($("<option></option>").attr("value", value).text(value));
     });
+  });
 
-    /* Check dismiss shortcuts */
-    Mousetrap.bindGlobal("alt+i", function(e) {});
-    for (var i = 1; i < 10; i++) {
-        Mousetrap.bindGlobal(
-            "alt+i " + i,
-            function(e) {
-                return false;
-            }
-        );
+  /* Click to edit position inline. Disable when clicked outside or pressed ESC */
+  $("#position-input").on("click", function () {
+    var $form = $(this).closest("form");
+    $("#position-input").hide();
+    $form.find("input[name=offset]").prop("disabled", false);
+    $("#position-input-editable").show();
+    $("#position-input-editable-input").attr("type", "number").focus();
+    document.addEventListener("click", clickedOutsideEditableInput);
+    document.addEventListener("keyup", pressedEscape);
+  });
+  var clickedOutsideEditableInput = function (event) {
+    if (
+      !$.contains($("#position-input-editable")[0], event.target) &&
+      event.target != $("#position-input")[0]
+    ) {
+      $("#position-input").show();
+      $("#position-input-editable-input").attr("type", "hidden");
+      $("#position-input-editable").hide();
+      document.removeEventListener("click", clickedOutsideEditableInput);
+      document.removeEventListener("keyup", pressedEscape);
+    }
+  };
+  var pressedEscape = function (event) {
+    if (event.key == "Escape" && event.target != $("#position-input")[0]) {
+      $("#position-input").show();
+      $("#position-input-editable-input").attr("type", "hidden");
+      $("#position-input-editable").hide();
+      document.removeEventListener("click", clickedOutsideEditableInput);
+      document.removeEventListener("keyup", pressedEscape);
+    }
+  };
+
+  /* Advanced search */
+  $(".search-group li a").click(function () {
+    var $this = $(this);
+    var $group = $this.closest(".search-group");
+    var $button = $group.find("button.search-field");
+
+    $button.attr("data-field", $this.data("field"));
+    var $title = $this.find("span.title");
+    var text = $this.text();
+    if ($title.length) {
+      text = $title.text();
+    }
+    $group.find("span.search-label").text(text);
+
+    if ($group.hasClass("sort-field")) {
+      $group.find("input[name=sort_by]").val($this.data("sort"));
+      if ($this.closest(".result-page-form").length) {
+        $this.closest("form").submit();
+      }
     }
 
-    if ($(".check").length > 0) {
-        $($('.check')[0].parentNode).children(".check").each(function(idx){
-            var $this = $(this);
-            if (idx < 10) {
-                var key = getNumericKey(idx);
-                $(this).find('.check-number').html(
-                    " <span class='badge kbd-badge' title='" +
-                    interpolate(gettext('Alt+I then %s'), [key]) +
-                    "'>" +
-                    key +
-                    "</span>"
-                );
-
-                Mousetrap.bindGlobal(
-                    "alt+i " + key,
-                    function(e) {
-                        $this.find('.close').click();
-                        return false;
-                    }
-                );
-            } else {
-                $(this).find('.check-number').html('');
-            }
-        });
+    if ($group.hasClass("query-field")) {
+      $group.find("input[name=q]").val($this.data("field"));
+      if ($this.closest(".result-page-form").length) {
+        var $form = $this.closest("form");
+        $form.find("input[name=offset]").prop("disabled", true);
+        $form.submit();
+      }
     }
+    $this.closest("ul").dropdown("toggle");
+    return false;
+  });
+  $(".query-sort-toggle").click(function () {
+    var $this = $(this);
+    var $input = $this.closest(".search-group").find("input[name=sort_by]");
+    var sort_params = $input.val().split(",");
+    sort_params.forEach(function (param, index) {
+      if (param.indexOf("-") !== -1) {
+        sort_params[index] = param.replace("-", "");
+      } else {
+        sort_params[index] = `-${param}`;
+      }
+    });
+    $input.val(sort_params.join(","));
+    if ($this.closest(".result-page-form").length) {
+      $this.closest("form").submit();
+    }
+  });
+  $(".search-group input")
+    .not("#id_q,#id_position,#id_term,#position-input-editable-input")
+    .on("keydown", function (event) {
+      if (event.key === "Enter") {
+        $(this).closest(".input-group").find(".search-add").click();
+        event.preventDefault();
+        return false;
+      }
+    });
+  $("#id_q").on("change", function (event) {
+    var $form = $(this).closest("form");
+    $form.find("input[name=offset]").prop("disabled", true);
+  });
+  $(".search-add").click(function () {
+    var group = $(this).closest(".search-group");
+    var button = group.find("button.search-field");
+    var input = group.find("input");
 
-    /* Labels in dropdown menu in Dashboard */
-    $("#views-menu li a").click(function(){
-      $("#views-title").html($(this).text()+' <span class="caret"></span>');
+    if (input.length === 0) {
+      $("#id_q").insertAtCaret(" " + button.attr("data-field") + " ");
+    } else if (input.val() !== "") {
+      var prefix = "";
+      if (group.find("#is-exact input[type=checkbox]").is(":checked")) {
+        prefix = "=";
+      }
+      $("#id_q").insertAtCaret(
+        " " +
+          button.attr("data-field") +
+          prefix +
+          quoteSearch(input.val()) +
+          " ",
+      );
+    }
+  });
+  $(".search-insert").click(function () {
+    $("#id_q").insertAtCaret(
+      " " + $(this).closest("tr").find("code").text() + " ",
+    );
+  });
+
+  /* Clickable rows */
+  $("tr[data-href]").click(function () {
+    window.location = $(this).data("href");
+  });
+
+  /* ZIP import - autofill name and slug */
+  $("#id_zipcreate_zipfile,#id_doccreate_docfile,#id_image").change(
+    function () {
+      var $form = $(this).closest("form");
+      var target = $form.find("input[name=name]");
+      if (this.files.length > 0 && target.val() === "") {
+        var name = this.files[0].name;
+        target.val(name.substring(0, name.lastIndexOf(".")));
+        target.change();
+      }
+    },
+  );
+
+  /* Alert when creating a component */
+  $("#form-create-component-branch,#form-create-component-vcs").submit(
+    function () {
+      addAlert(
+        gettext("Weblate is now scanning the repository, please be patient."),
+        (kind = "info"),
+        (delay = 0),
+      );
+    },
+  );
+
+  /* Username autocompletion */
+  var tribute = new Tribute({
+    trigger: "@",
+    requireLeadingSpace: true,
+    menuShowMinLength: 2,
+    searchOpts: {
+      pre: "​",
+      post: "​",
+    },
+    noMatchTemplate: function () {
+      return "";
+    },
+    menuItemTemplate: function (item) {
+      let link = document.createElement("a");
+      link.innerText = item.string;
+      return link.outerHTML;
+    },
+    values: (text, callback) => {
+      $.ajax({
+        type: "GET",
+        url: `/api/users/?username=${text}`,
+        dataType: "json",
+        success: function (data) {
+          var userMentionList = data.results.map(function (user) {
+            return {
+              value: user.username,
+              key: `${user.full_name} (${user.username})`,
+            };
+          });
+          callback(userMentionList);
+        },
+        error: function (jqXHR, textStatus, errorThrown) {
+          console.error(errorThrown);
+        },
+      });
+    },
+  });
+  tribute.attach(document.querySelectorAll(".markdown-editor"));
+  document.querySelectorAll(".markdown-editor").forEach((editor) => {
+    editor.addEventListener("tribute-active-true", function (e) {
+      $(".tribute-container").addClass("open");
+      $(".tribute-container ul").addClass("dropdown-menu");
+    });
+  });
+
+  /* forset fields adding */
+  $(".add-multifield").on("click", function () {
+    const updateElementIndex = function (el, prefix, ndx) {
+      const id_regex = new RegExp("(" + prefix + "-(\\d+|__prefix__))");
+      const replacement = prefix + "-" + ndx;
+      if ($(el).prop("for")) {
+        $(el).prop("for", $(el).prop("for").replace(id_regex, replacement));
+      }
+      if (el.id) {
+        el.id = el.id.replace(id_regex, replacement);
+      }
+      if (el.name) {
+        el.name = el.name.replace(id_regex, replacement);
+      }
+    };
+    var $this = $(this);
+    var $form = $this.parents("form");
+    var prefix = $this.data("prefix");
+    var blank = $form.find(".multiFieldEmpty");
+    var row = blank.clone();
+    var totalForms = $("#id_" + prefix + "-TOTAL_FORMS");
+    row.removeClass(["multiFieldEmpty", "hidden"]).addClass("multiField");
+    row.find("*").each(function () {
+      updateElementIndex(this, prefix, totalForms.val());
     });
 
+    row.insertBefore(blank);
+    totalForms.val(parseInt(totalForms.val(), 10) + 1);
 
+    return false;
+  });
+
+  /* Textarea highlighting */
+  Prism.languages.none = {};
+  initHighlight(document);
+
+  $(".replace-preview input[type='checkbox']").on("change", function () {
+    $(this).closest("tr").toggleClass("warning", this.checked);
+  });
+
+  /* Suggestion rejection */
+  $(".rejection-reason").on("keydown", function (event) {
+    if (event.key === "Enter") {
+      $(this).closest("form").find("[name='delete']").click();
+      event.preventDefault();
+      return false;
+    }
+  });
+
+  /* Warn users that they do not want to use developer console in most cases */
+  console.log(
+    "%c" +
+      pgettext("Alert to user when opening browser developer console", "Stop!"),
+    "color: red; font-weight: bold; font-size: 50px; font-family: sans-serif; -webkit-text-stroke: 1px black;",
+  );
+  console.log(
+    "%c" +
+      gettext(
+        "This is a browser feature intended for developers. If someone told you to copy-paste something here, they are likely trying to compromise your Weblate account.",
+      ),
+    "font-size: 20px; font-family: sans-serif",
+  );
+  console.log(
+    "%c" +
+      gettext(
+        "See https://en.wikipedia.org/wiki/Self-XSS for more information.",
+      ),
+    "font-size: 20px; font-family: sans-serif",
+  );
 });

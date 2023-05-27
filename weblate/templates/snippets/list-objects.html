@@ -1,0 +1,202 @@
+{% load i18n %}
+{% load translations %}
+{% load permissions %}
+{% load humanize %}
+{% load icons %}
+
+{% init_unique_row_id %}
+
+{% if objects %}
+  {% if objects.paginator.num_pages > 1 %}
+    <table class="table progress-table autocolspan table-listing">
+  {% else %}
+    <table class="sort table progress-table autocolspan table-listing">
+  {% endif %}
+  {% if not hide_details %}
+    <thead class="sticky-header">
+      <tr>
+        <th class="sort-skip"></th>
+        <th title="{% trans "Sort this column" %}" class="sort-cell">
+          {% if objects.paginator.num_pages > 1 %}
+            <a href="?page={{ objects.number }}&amp;sort_by={% if objects.paginator.sort_by == "name" %}-{% endif %}name">
+          {% endif %}
+          {{ label|default:_("Project") }}
+          <span class="sort-icon {% if objects.paginator.sort_by == "name" %}sort-down{% elif objects.paginator.sort_by == "-name" %}sort-up{% endif %}" />
+          {% if objects.paginator.num_pages > 1 %}
+            </a>
+          {% endif %}
+        </th>
+        <th title="{% trans "Sort this column" %}" class="number sort-cell">
+          {% if objects.paginator.num_pages > 1 %}
+            <a href="?page={{ objects.number }}&amp;sort_by={% if objects.paginator.sort_by == "translated" %}-{% endif %}translated">
+          {% endif %}
+          {% trans "Translated" %}
+          <span class="sort-icon {% if objects.paginator.sort_by == "translated" %}sort-down{% elif objects.paginator.sort_by == "-translated" %}sort-up{% endif %}" />
+          {% if objects.paginator.num_pages > 1 %}
+            </a>
+          {% endif %}
+        </th>
+        <th title="{% trans "Sort this column" %}" class="number zero-width-640 sort-cell">
+          {% if objects.paginator.num_pages > 1 %}
+            <a href="?page={{ objects.number }}&amp;sort_by={% if objects.paginator.sort_by == "untranslated" %}-{% endif %}untranslated">
+          {% endif %}
+          {% trans "Unfinished" %}
+          <span class="sort-icon {% if objects.paginator.sort_by == "untranslated" %}sort-down{% elif objects.paginator.sort_by == "-untranslated" %}sort-up{% endif %}" />
+          {% if objects.paginator.num_pages > 1 %}
+            </a>
+          {% endif %}
+        </th>
+        <th title="{% trans "Sort this column" %}" class="number zero-width-720 sort-cell">
+          {% if objects.paginator.num_pages > 1 %}
+            <a href="?page={{ objects.number }}&amp;sort_by={% if objects.paginator.sort_by == "untranslated_words" %}-{% endif %}untranslated_words">
+          {% endif %}
+          {% trans "Unfinished words" %}
+          <span class="sort-icon {% if objects.paginator.sort_by == "untranslated_words" %}sort-down{% elif objects.paginator.sort_by == "-untranslated_words" %}sort-up{% endif %}" />
+          {% if objects.paginator.num_pages > 1 %}
+            </a>
+          {% endif %}
+        </th>
+        <th title="{% trans "Sort this column" %}" class="number zero-width-1200 sort-cell">
+          {% if objects.paginator.num_pages > 1 %}
+            <a href="?page={{ objects.number }}&amp;sort_by={% if objects.paginator.sort_by == "untranslated_chars" %}-{% endif %}untranslated_chars">
+          {% endif %}
+          {% trans "Unfinished characters" %}
+          <span class="sort-icon {% if objects.paginator.sort_by == "untranslated_chars" %}sort-down{% elif objects.paginator.sort_by == "-untranslated_chars" %}sort-up{% endif %}" />
+          {% if objects.paginator.num_pages > 1 %}
+            </a>
+          {% endif %}
+        </th>
+        <th title="{% trans "Sort this column" %}" class="number zero-width-1400 sort-cell">
+          {% if objects.paginator.num_pages > 1 %}
+            <a href="?page={{ objects.number }}&amp;sort_by={% if objects.paginator.sort_by == "nottranslated" %}-{% endif %}nottranslated">
+          {% endif %}
+          {% trans "Untranslated" %}
+          <span class="sort-icon {% if objects.paginator.sort_by == "nottranslated" %}sort-down{% elif objects.paginator.sort_by == "-nottranslated" %}sort-up{% endif %}" />
+          {% if objects.paginator.num_pages > 1 %}
+            </a>
+          {% endif %}
+        </th>
+        <th title="{% trans "Sort this column" %}" class="number zero-width-768 sort-cell">
+          {% if objects.paginator.num_pages > 1 %}
+            <a href="?page={{ objects.number }}&amp;sort_by={% if objects.paginator.sort_by == "checks" %}-{% endif %}checks">
+          {% endif %}
+          {% trans "Checks" %}
+          <span class="sort-icon {% if objects.paginator.sort_by == "checks" %}sort-down{% elif objects.paginator.sort_by == "-checks" %}sort-up{% endif %}" />
+          {% if objects.paginator.num_pages > 1 %}
+            </a>
+          {% endif %}
+        </th>
+        <th title="{% trans "Sort this column" %}" class="number zero-width-900 sort-cell">
+          {% if objects.paginator.num_pages > 1 %}
+            <a href="?page={{ objects.number }}&amp;sort_by={% if objects.paginator.sort_by == "suggestions" %}-{% endif %}suggestions">
+          {% endif %}
+          {% trans "Suggestions" %}
+          <span class="sort-icon {% if objects.paginator.sort_by == "suggestions" %}sort-down{% elif objects.paginator.sort_by == "-suggestions" %}sort-up{% endif %}" />
+          {% if objects.paginator.num_pages > 1 %}
+            </a>
+          {% endif %}
+        </th>
+        <th title="{% trans "Sort this column" %}" class="number zero-width-1000 sort-cell">
+          {% if objects.paginator.num_pages > 1 %}
+            <a href="?page={{ objects.number }}&amp;sort_by={% if objects.paginator.sort_by == "comments" %}-{% endif %}comments">
+          {% endif %}
+          {% trans "Comments" %}
+          <span class="sort-icon {% if objects.paginator.sort_by == "comments" %}sort-down{% elif objects.paginator.sort_by == "-comments" %}sort-up{% endif %}" />
+          {% if objects.paginator.num_pages > 1 %}
+            </a>
+          {% endif %}
+        </th>
+      </tr>
+    </thead>
+  {% endif %}
+
+
+<tbody>
+{% for object in objects %}
+{% get_translate_url object as translate_url %}
+{% get_browse_url object as browse_url %}
+{% get_unique_row_id object as row_id %}
+<tr id="{{ row_id }}">
+<td class="actions" rowspan="2">
+{% if object.is_ghost %}
+    <form action="{% url 'new-language' project=object.component.project.slug component=object.component.slug %}" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="lang" value="{{ object.language.code }}" />
+        <button type="submit" alt="{% trans "Create translation" %}" title="{% trans "Create translation" %}" class="btn btn-link green">{% icon "plus.svg" %}</button>
+    </form>
+{% else %}
+    {% if translate_url %}
+        <a href="{{ translate_url }}{% if object.stats.todo %}?q=state:&lt;translated{% endif %}" class="btn btn-link green" title="{% trans "Translate" %}" alt="{% trans "Translate" %}">{% icon "pencil.svg" %}</a>
+    {% else %}
+        <a href="{{ browse_url }}" class="btn btn-link green" title="{% trans "Browse" %}" alt="{% trans "Browse" %}">{% icon "folder-search-outline.svg" %}</a>
+    {% endif %}
+{% endif %}
+</td>
+<th class="object-link">
+{% if name_source == "component_name" %}
+  {% include "snippets/component-glossary-badge.html" with object=object.component %}
+{% else %}
+  {% include "snippets/component-glossary-badge.html" %}
+{% endif %}
+{% if object.is_ghost %}
+    <span class="ghost">
+    {% if name_source == "language" %}
+        {{ object.language }}
+    {% elif name_source == "component_name" %}
+        {{ object.component.name }}
+    {% elif name_source == "name" %}
+        {{ object.name }}
+    {% elif name_source == "language" %}
+        {{ object.language }}
+    {% elif name_source == "project" %}
+        {{ object.project }}
+    {% else %}
+        {{ object }}
+    {% endif %}
+    </span>
+{% elif name_source == "translation" %}
+    <a href="{{ object.component.project.get_absolute_url }}">{{ object.component.project.name }}</a>/<a href="{{ object.component.get_absolute_url }}">{{ object.component.name }}</a>
+    — <a class="tail" href="{{ browse_url }}">{{ object.language }}</a>
+{% else %}
+    <a href="{{ browse_url }}">{% spaceless %}
+    {% if name_source == "language" %}
+        {{ object.language }}
+    {% elif name_source == "component_name" %}
+        {{ object.component.name }}
+    {% elif name_source == "name" %}
+        {{ object.name }}
+    {% elif name_source == "language" %}
+        {{ object.language }}
+    {% elif name_source == "project" %}
+        {{ object.project }}
+    {% else %}
+        {{ object }}
+    {% endif %}
+    {% endspaceless %}</a>
+{% endif %}
+{% indicate_alerts object %}
+</th>
+{% if is_glossary %}
+  {% include "snippets/list-objects-number.html" with value=object.stats.translated query="q=state:>=translated" show_zero=True %}
+{% else %}
+  {% include "snippets/list-objects-percent.html" with percent=object.stats.translated_percent value=object.stats.translated query="q=state:>=translated" all=object.stats.all %}
+{% endif %}
+{% if not hide_details %}
+{% include "snippets/list-objects-number.html" with value=object.stats.todo query="q=state:<translated" class="zero-width-640" %}
+{% include "snippets/list-objects-number.html" with value=object.stats.todo_words query="q=state:<translated" class="zero-width-720" %}
+{% include "snippets/list-objects-number.html" with value=object.stats.todo_chars query="q=state:<translated" class="zero-width-1200" %}
+{% include "snippets/list-objects-number.html" with value=object.stats.nottranslated query="q=state:empty" class="zero-width-1400" %}
+{% include "snippets/list-objects-number.html" with value=object.stats.allchecks query="q=has:check" class="zero-width-768" %}
+{% include "snippets/list-objects-number.html" with value=object.stats.suggestions query="q=has:suggestion#suggestions" class="zero-width-900" %}
+{% include "snippets/list-objects-number.html" with value=object.stats.comments query="q=has:comment#comments" class="zero-width-1000" %}
+{% endif %}
+</tr>
+<tr data-parent="{{ row_id }}">
+<td colspan="7" class="progress-row autocolspan">{% translation_progress object.stats %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p><em>{% trans "Nothing to list here." %}</em></p>
+{% endif %}

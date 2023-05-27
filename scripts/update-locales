@@ -1,21 +1,75 @@
 #!/bin/sh
 
+# Copyright © Michal Čihař <michal@weblate.org>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Renerates .po files used for translating Weblate
 
 # Exit on failure
 set -e
 
+
+. scripts/test-database.sh
+
+version=$(python -c 'import weblate.utils.version; print(weblate.utils.version.VERSION_BASE)')
+
+COMPONENTS="weblate/application weblate/javascript weblate/documentation"
+
+do_wlc() {
+    for component in $COMPONENTS ; do
+        wlc "$1" "$component"
+    done
+}
+
+# Lock Weblate
+do_wlc lock
+
+# Push changes from Weblate to GitHub
+do_wlc push
+
+# Update Weblate remote
+git remote update weblate
+
+# Pull changes from GitHub
+git rebase --onto weblate/main
+
+# Cleanup locale dirs
+find weblate/locale \( -name '*.mo' -o -name '*~' \) -delete
+find weblate/locale -type d -empty -delete
+
 # Update po files itself
-./manage.py makemessages --keep-pot -a -i 'data/*' -i 'docs/*' -i 'examples/*' -i 'build/*' --settings=weblate.settings_test
-./manage.py makemessages --keep-pot -a -i 'data/*' -i 'docs/*' -i 'examples/*' -i 'build/*' -d djangojs --settings=weblate.settings_test
+./manage.py makemessages --keep-pot -a -i 'data/*' -i 'docs/*' -i 'examples/*' -i 'build/*'
+./manage.py makemessages --keep-pot -a -i 'data/*' -i 'docs/*' -i 'examples/*' -i 'build/*' -d djangojs
 
 # Fix Report-Msgid-Bugs-To as it gets removed
-sed -i 's/"Report-Msgid-Bugs-To:.*/"Report-Msgid-Bugs-To: weblate@lists.cihar.com\\n"/' weblate/locale/*/*/*.po
+sed \
+    -i \
+    -e 's@"Report-Msgid-Bugs-To:.*@"Report-Msgid-Bugs-To: https://github.com/WeblateOrg/weblate/issues\\n"@' \
+    -e 's/"Project-Id-Version:.*/"Project-Id-Version: Weblate '"$version"'\\n"/' \
+    weblate/locale/*/*/*.po weblate/locale/*.pot
+
+# Include translations from Django
+for locale in weblate/locale/*/LC_MESSAGES/django.po ; do
+    code=${locale#weblate/locale/}
+    code=${code%/LC_MESSAGES/django.po}
+    file=~/work/django/django/conf/locale/$code/LC_MESSAGES/django.po
+    if [ -f "$file" ] ; then
+        msgmerge --previous -C "$file" -U "$locale" weblate/locale/django.pot
+    fi
+done
+
+# Update PO files for documentation
+make -C docs update-po
 
 # Commit changes
-git add weblate/locale/*/*/*.po
-git add weblate/locale/django.pot weblate/locale/djangojs.pot
+# shellcheck disable=SC2046
+git add $(find weblate/locale/ docs/locales/ -name '*.po' -o -name '*.pot')
 
-git commit -s -m "Update po files
+git commit -n -m "i18n: Update PO files"
 
-[CI skip]"
+# Push changes
+git push
+
+# Unlock Weblate
+do_wlc unlock

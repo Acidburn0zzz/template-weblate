@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% load translations %}
+{% load crispy_forms_tags %}
+
+{% block breadcrumbs %}
+{% if project %}
+<li><a href="{{ project.get_absolute_url }}">{{ project.name }}</a></li>
+{% if component %}
+{% include "snippets/component-breadcrumb.html" with object=component %}
+{% endif %}
+{% if language %}
+<li><a href="{% url 'project-language' project=project.slug lang=language.code %}">{{ language }}</a></li>
+{% endif %}
+{% elif language %}
+<li><a href="{{ language.get_absolute_url }}">{{ language }}</a></li>
+{% endif %}
+<li><a href="{% if back_url %}{{ back_url }}#search{% else %}{% url 'search' %}{% endif %}">{% trans "Search" %}</a></li>
+{% endblock %}
+
+{% block content %}
+
+{% if show_results %}
+    <form method="GET" class="result-page-form">
+        {% crispy search_form  %}
+    </form>
+    {% if page_obj.object_list %}
+        {% include "snippets/embed-units.html" with units=page_obj.object_list hide_context=True include_search=True force_source=True show_translation=True %}
+        {% include "paginator.html" %}
+    {% else %}
+        {% trans "No matching strings found." as msg %}
+        {% show_message "info" msg %}
+    {% endif %}
+
+{% else %}
+    <form method="GET" class="result-page-form">
+    {% include "snippets/search-form.html" %}
+    </form>
+{% endif %}
+
+{% endblock %}

@@ -1,108 +1,91 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
+import argparse
 import json
 
-from django.core.management.base import BaseCommand, CommandError
-from django.contrib.auth.models import User
-
-from weblate.accounts.models import Profile
+from weblate.auth.models import User
 from weblate.lang.models import Language
 from weblate.trans.models import Project
+from weblate.utils.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = 'imports userdata from JSON dump of database'
-    args = '<json-file>'
+    help = "imports userdata from JSON dump of database"
 
-    def import_subscriptions(self, profile, userprofile):
-        """
-        Imports user subscriptions.
-        """
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "json-file",
+            type=argparse.FileType("r"),
+            help="JSON file containing user data to import",
+        )
+
+    @staticmethod
+    def import_watched(profile, userprofile):
+        """Import user subscriptions."""
         # Add subscriptions
-        for subscription in userprofile['subscriptions']:
+        for subscription in userprofile["watched"]:
             try:
-                profile.subscriptions.add(
-                    Project.objects.get(slug=subscription)
-                )
+                profile.watched.add(Project.objects.get(slug=subscription))
             except Project.DoesNotExist:
                 continue
 
-        # Subscription settings
-        for field in Profile.SUBSCRIPTION_FIELDS:
-            setattr(profile, field, userprofile[field])
+    @staticmethod
+    def update_languages(profile, userprofile):
+        """Update user language preferences."""
+        profile.language = userprofile["language"]
+        for lang in userprofile["secondary_languages"]:
+            profile.secondary_languages.add(Language.objects.auto_get_or_create(lang))
+        for lang in userprofile["languages"]:
+            profile.languages.add(Language.objects.auto_get_or_create(lang))
 
-    def update_languages(self, profile, userprofile):
+    def handle_compat(self, data):
+        """Compatibility with pre 3.6 dumps."""
+        if "basic" in data:
+            return
+        data["basic"] = {"username": data["username"]}
+        data["profile"] = {
+            "translated": data["translated"],
+            "suggested": data["suggested"],
+            "language": data["language"],
+            "uploaded": data.get("uploaded", 0),
+            "secondary_languages": data["secondary_languages"],
+            "languages": data["languages"],
+            "watched": data["subscriptions"],
+        }
+
+    def handle(self, **options):
         """
-        Updates user language preferences.
+        Create default set of groups.
+
+        Also ptionally updates them and moves users around to default group.
         """
-        profile.language = userprofile['language']
-        for lang in userprofile['secondary_languages']:
-            profile.secondary_languages.add(
-                Language.objects.get(code=lang)
-            )
-        for lang in userprofile['languages']:
-            profile.languages.add(
-                Language.objects.get(code=lang)
-            )
-
-    def handle(self, *args, **options):
-        '''
-        Creates default set of groups and optionally updates them and moves
-        users around to default group.
-        '''
-        if len(args) != 1:
-            raise CommandError('Please specify JSON file to import!')
-
-        userdata = json.load(open(args[0]))
+        userdata = json.load(options["json-file"])
+        options["json-file"].close()
 
         for userprofile in userdata:
+            self.handle_compat(userprofile)
+            username = userprofile["basic"]["username"]
             try:
-                user = User.objects.get(username=userprofile['username'])
+                user = User.objects.get(username=username)
                 update = False
-                try:
-                    profile = Profile.objects.get(user=user)
-                    if not profile.language:
-                        update = True
-                except Profile.DoesNotExist:
+                profile = user.profile
+                if not profile.language:
                     update = True
-                    profile = Profile.objects.create(user=user)
-                    self.stdout.write(
-                        'Creating profile for {0}'.format(
-                            userprofile['username']
-                        )
-                    )
 
                 # Merge stats
-                profile.translated += userprofile['translated']
-                profile.suggested += userprofile['suggested']
+                profile.translated += userprofile["profile"]["translated"]
+                profile.suggested += userprofile["profile"]["suggested"]
+                profile.uploaded += userprofile["profile"]["uploaded"]
 
                 # Update fields if we should
                 if update:
-                    self.update_languages(profile, userprofile)
+                    self.update_languages(profile, userprofile["profile"])
 
                 # Add subscriptions
-                self.import_subscriptions(profile, userprofile)
+                self.import_watched(profile, userprofile["profile"])
 
                 profile.save()
             except User.DoesNotExist:
-                self.stderr.write(
-                    'User not found: {0}\n'.format(userprofile['username'])
-                )
+                self.stderr.write(f"User not found: {username}\n")

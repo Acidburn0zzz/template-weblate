@@ -1,0 +1,10 @@
+{% extends "!layout.html" %}
+
+{%- block extrahead %}
+{{ super() }}
+  {% if READTHEDOCS %}
+    <link rel="preconnect" href="https://stats.cihar.com" />
+    <link rel="preconnect" href="https://assets.readthedocs.org" />
+    <link rel="preconnect" href="https://readthedocs.org" />
+  {% endif %}
+{% endblock %}

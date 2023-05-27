@@ -1,4 +1,0 @@
-{% load i18n %}
-{% autoescape off %}
-{% blocktrans %}New string to translate in {{ translation }}{% endblocktrans %}
-{% endautoescape %}

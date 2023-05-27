@@ -4,22 +4,26 @@
 <defaultcodec>UTF-8</defaultcodec>
 <context>
     <name></name>
-    <message>
+    <message weblate-flags="c-format, max-length:100">
         <source>Hello, world!
 </source>
-        <translation>Ahoj světe!
+        <translation>Ahoj svete!
 </translation>
     </message>
     <message numerus="yes">
         <source>Orangutan has %d banana(s).
 </source>
-        <translation type="unfinished"><numerusform /><numerusform /><numerusform /></translation>
+        <translation type="unfinished">
+            <numerusform />
+            <numerusform />
+            <numerusform />
+        </translation>
     </message>
 </context>
 <context>
     <name>Second</name>
     <message>
-        <source>Try Weblate at &lt;http://demo.weblate.org/&gt;!</source>
+        <source>Try Weblate at &lt;https://demo.weblate.org/&gt;!</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

@@ -1,54 +1,41 @@
-# -*- coding: utf-8 -*-
+# Copyright © Michal Čihař <michal@weblate.org>
 #
-# Copyright © 2012 - 2016 Michal Čihař <michal@cihar.com>
-#
-# This file is part of Weblate <https://weblate.org/>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
-
-from datetime import timedelta
-
-from django.core.management.base import BaseCommand
-from django.utils import timezone
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 from weblate.billing.models import Billing
+from weblate.billing.tasks import billing_notify
+from weblate.utils.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    """
-    Command for billing check.
-    """
-    help = 'checks billing limits'
+    """Command for billing check."""
+
+    help = "checks billing limits"
+
+    def add_arguments(self, parser):
+        parser.add_argument("--valid", action="store_true", help="list valid ones")
+        parser.add_argument(
+            "--notify", action="store_true", help="send email notifications"
+        )
 
     def handle(self, *args, **options):
-        header = False
-        for bill in Billing.objects.all():
-            if not bill.in_limits():
-                if not header:
-                    self.stdout.write('Following billings are over limit:')
-                    header = True
-                self.stdout.write(
-                    ' * {0}'.format(bill)
-                )
-        header = False
-        due_date = timezone.now() - timedelta(days=30)
-        for bill in Billing.objects.filter(state=Billing.STATE_ACTIVE):
-            if not bill.invoice_set.filter(end__gt=due_date).exists():
-                if not header:
-                    self.stdout.write('Following billings are past due date:')
-                    header = True
-                self.stdout.write(
-                    ' * {0}'.format(bill)
-                )
+        if options["notify"]:
+            billing_notify()
+            return
+        Billing.objects.check_limits()
+        if options["valid"]:
+            for bill in Billing.objects.get_valid():
+                self.stdout.write(f" * {bill}")
+            return
+        limit = Billing.objects.get_out_of_limits()
+        due = Billing.objects.get_unpaid()
+
+        if limit:
+            self.stdout.write("Following billings are over limit:")
+            for bill in limit:
+                self.stdout.write(f" * {bill}")
+
+        if due:
+            self.stdout.write("Following billings are past due date:")
+            for bill in due:
+                self.stdout.write(f" * {bill}")
